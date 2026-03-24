@@ -23,14 +23,13 @@ Corresponding manuscript title:
 
 ## Workflow overview
 
-`SPOmiAlign` supports image-to-image and h5ad-to-h5ad alignment workflows:
+`SPOmiAlign` supports h5ad-to-image, image-to-image and h5ad-to-h5ad alignment workflows:
 
 1. Convert spatial omics coordinates or intensity-aware spots into rasterized images.
 2. Use the RoMa-based feature matching pipeline to estimate cross-modality alignment.
 3. Warp source coordinates or aligned h5ad objects into the reference coordinate system.
 4. Reassign source expression profiles onto the aligned spatial layout for downstream analysis.
 
-The overview figure used in this README is generated from [`images/figure_1.pdf`](images/figure_1.pdf). The repository organization and README presentation are adapted with reference to [`gao-lab/SLAT`](https://github.com/gao-lab/SLAT).
 
 ## Installation
 
