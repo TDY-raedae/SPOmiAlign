@@ -12,9 +12,9 @@ import matplotlib.pyplot as plt
 import SimpleITK as sitk
 
 # ==========================================
-# 0. [关键修改] 导入 data_process
+# 0. [Key update] Import data_process
 # ==========================================
-# 将当前目录加入系统路径，确保能找到同目录下的 data_process.py
+# Add the current directory to sys.path so data_process.py can be found in the same location
 sys.path.append(os.getcwd())
 
 try:
@@ -24,24 +24,24 @@ except ImportError:
     print("❌ Error: Could not import 'data_process.py'. Please ensure it is in the same directory.")
     sys.exit(1)
 
-# 确保安装了 romatch
+# Make sure romatch is installed
 from romatch import roma_outdoor
 
-# [配置] 防止 HDF5 锁文件问题
+# [Config] Prevent HDF5 file-locking issues
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 def debug_step_visualization(adata, bg_bgr, step_name, output_dir, x_col, y_col, rotate, radius):
     """
-    极简染色法可视化 (白底 + 红色组织 + 蓝色位点覆盖)
+    Minimal color visualization (white background + red tissue + blue spot overlay)
     """
-    # --- 1. 数据清洗 (防止 h5ad 保存报错) ---
+    # --- 1. Data cleanup (avoid h5ad save errors) ---
     def sanitize_dataframe(df):
         if '_index' in df.columns:
             df.drop(columns=['_index'], inplace=True)
         if df.index.name == '_index':
             df.index.name = None
 
-    # 深度拷贝一份，避免修改原对象
+    # Make a deep copy to avoid modifying the original object
     tmp_adata = adata.copy()
     sanitize_dataframe(tmp_adata.obs)
     sanitize_dataframe(tmp_adata.var)
@@ -52,11 +52,11 @@ def debug_step_visualization(adata, bg_bgr, step_name, output_dir, x_col, y_col,
             tmp_adata.raw = raw_adata
         except: pass
 
-    # 保存临时 h5ad 以便调用栅格化函数
+    # Save a temporary h5ad file so the rasterization helper can be called
     temp_h5ad = os.path.join(output_dir, f"tmp_{step_name}.h5ad")
     tmp_adata.write(temp_h5ad)
     
-    # --- 2. 获取尺寸并生成位点图 ---
+    # --- 2. Read the canvas size and generate the spot image ---
     h, w = bg_bgr.shape[:2]
     out_png = os.path.join(output_dir, f"tmp_pts_{step_name}.png")
     
@@ -66,10 +66,10 @@ def debug_step_visualization(adata, bg_bgr, step_name, output_dir, x_col, y_col,
         output_png=out_png,
         x_obs_col=x_col,
         y_obs_col=y_col,
-        intensity_obs_col="nFeature_Spatial", # 使用这个作为强度参考
+        intensity_obs_col="nFeature_Spatial", # Use this column as the intensity reference
         intensity_log_transform=True,
         threshold_percentile=80,
-        background="black",  # 生成黑底白点图，方便做二值化
+        background="black",  # Generate a black-background / white-point image for easier binarization
         point_shape="circle",
         radius=radius,
         enhance=True,
@@ -78,45 +78,45 @@ def debug_step_visualization(adata, bg_bgr, step_name, output_dir, x_col, y_col,
         canvas_size=(w, h)
     )
 
-    # --- 3. 读取图像并二值化提取掩模 (Mask) ---
-    # 背景图掩模
+    # --- 3. Read images and extract masks with binarization ---
+    # Background image mask
     bg_gray = cv2.cvtColor(bg_bgr, cv2.COLOR_BGR2GRAY) if len(bg_bgr.shape)==3 else bg_bgr
     _, bg_mask = cv2.threshold(bg_gray, 5, 255, cv2.THRESH_BINARY)
     
-    # 位点图掩模
+    # Spot image mask
     pts_gray = cv2.imread(out_png, cv2.IMREAD_GRAYSCALE)
     if pts_gray is None:
-        print(f"❌ 错误: 无法读取栅格化后的图片 {out_png}")
+        print(f"[ERROR] Failed to read the rasterized image {out_png}")
         return
     pts_gray = cv2.resize(pts_gray, (w, h))
     _, pts_mask = cv2.threshold(pts_gray, 5, 255, cv2.THRESH_BINARY)
 
-    # --- 4. 染色并合成 (白底风格) ---
-    # 创建纯白画布
+    # --- 4. Colorize and compose (white-background style) ---
+    # Create a pure white canvas
     canvas = np.full((h, w, 3), 255, dtype=np.uint8)
 
-    # 先给背景组织区域刷上红色 (BGR: 0, 0, 255)
+    # First paint tissue regions in red (BGR: 0, 0, 255)
     canvas[bg_mask > 0] = [0, 0, 255]
 
-    # 再给位点区域刷上蓝色 (BGR: 255, 0, 0)，直接覆盖红色
+    # Then paint spot regions in blue (BGR: 255, 0, 0), directly overwriting red
     canvas[pts_mask > 0] = [255, 0, 0]
 
-    # --- 5. 保存并清理 ---
+    # --- 5. Save and clean up ---
     save_path = os.path.join(output_dir, f"DEBUG_{step_name}_Overlay.jpg")
     cv2.imwrite(save_path, canvas)
     
-    # 清理临时文件
+    # Remove temporary files
     if os.path.exists(temp_h5ad): os.remove(temp_h5ad)
     if os.path.exists(out_png): os.remove(out_png)
 
-    print(f"✅ 诊断图已生成: {save_path} (红色:组织, 蓝色:位点)")
+    print(f"[OK] Diagnostic image generated: {save_path} (red: tissue, blue: spots)")
 
 # ==========================================
-# 1. 核心数学与变换函数 (保持不变)
+# 1. Core math and transformation functions
 # ==========================================
 
 def estimate_rigid_transform_svd(src_pts, dst_pts):
-    """SVD 刚体变换估计 (Kabsch算法)"""
+    """SVD rigid-transform estimation (Kabsch algorithm)"""
     if len(src_pts) < 3:
         raise ValueError("Rigid transform requires at least 3 points.")
     centroid_src = np.mean(src_pts, axis=0)
@@ -134,7 +134,7 @@ def estimate_rigid_transform_svd(src_pts, dst_pts):
     return M
 
 def warp_image_bspline(moving_img_np: np.ndarray, tx: sitk.Transform, out_size_xy=None):
-    """SimpleITK B-spline 图像变换"""
+    """SimpleITK B-spline image transformation"""
     if moving_img_np.ndim == 2:
         moving = sitk.GetImageFromArray(moving_img_np.astype(np.float32))
     else:
@@ -155,7 +155,7 @@ def warp_image_bspline(moving_img_np: np.ndarray, tx: sitk.Transform, out_size_x
     return sitk.GetArrayFromImage(warped)
 
 def fit_bspline_transform(fixed_kpts, moving_kpts, H, W, mesh_size=None, max_iter=None, inpaint_radius=3, smooth_sigma=15.0):
-    """构造 B-spline 变换"""
+    """Construct a B-spline transform"""
     dx = np.full((H, W), np.nan, dtype=np.float32)
     dy = np.full((H, W), np.nan, dtype=np.float32)
     cnt = np.zeros((H, W), dtype=np.int32)
@@ -188,7 +188,7 @@ def fit_bspline_transform(fixed_kpts, moving_kpts, H, W, mesh_size=None, max_ite
         return sitk.Transform(2, sitk.sitkIdentity)
 
 # ==========================================
-# 2. RoMa 辅助函数 (保持不变)
+# 2. RoMa helper functions
 # ==========================================
 
 def compute_edge_weight(img_path, H, W, device, sigma=2.0, decay=5.0):
@@ -216,7 +216,7 @@ def apply_grid_nms(certainty_tensor, kernel_size=3):
     return (x * ((x == max_val) & (x > 1e-6))).squeeze()
 
 def draw_matches_visualization(im1, im2, kpts1, kpts2, radius=6):
-    """绘制颜色编码的匹配点"""
+    """Draw color-coded matched keypoints"""
     h1, w1 = im1.shape[:2]
     h2, w2 = im2.shape[:2]
     vis = np.zeros((max(h1, h2), w1 + w2, 3), dtype=np.uint8)
@@ -245,7 +245,7 @@ def show_image_in_jupyter(img, title="Image", figsize=(20, 10), dpi=70):
     plt.show()
 
 # ==========================================
-# 3. 主流程函数
+# 3. Main pipeline function
 # ==========================================
 
 def align_and_process_images(
@@ -258,7 +258,7 @@ def align_and_process_images(
     spatial_key='spatial',     
     x_obs_col=None,            
     y_obs_col=None,
-    # === 新增参数 ===
+    # === Additional parameters ===
     rotate: float = 0.0,
     scale: float = 1.0,
     rotate_origin: str = "data",
@@ -267,7 +267,7 @@ def align_and_process_images(
     os.makedirs(output_dir, exist_ok=True)
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
-    # [内部辅助函数：复用 data_processing 的逻辑]
+    # [Internal helper: reuse logic from data_processing]
     def apply_manual_transform(
         pts: np.ndarray, 
         deg: float, 
@@ -275,44 +275,44 @@ def align_and_process_images(
         origin
     ) -> np.ndarray:
         """
-        基于画布尺寸 (target_size) 使用矩阵运算实现旋转/缩放。
-        重构版本：内部逻辑已改为线性代数矩阵变换，支持任意角度。
+        Apply rotation/scaling with matrix operations based on the canvas size (target_size).
+        Refactored version: internal logic now uses linear-algebra matrix transforms and supports arbitrary angles.
         
-        参数:
-            pts: (N, 2) 坐标点数组。
-            deg: 旋转角度 (顺时针为正，支持任意浮点数)。
-            s: 缩放比例 (会在旋转前应用，以 (0,0) 为缩放中心)。
-            target_size: (width, height) 目标图像的宽高，用于计算旋转中心。
+        Parameters:
+            pts: (N, 2) coordinate array.
+            deg: rotation angle (clockwise is positive, any float is allowed).
+            s: scaling factor (applied before rotation, using (0,0) as the scaling center).
+            target_size: (width, height) of the target image, used to compute the rotation center.
             
-        返回:
-            (N, 2) 变换后的坐标，float32 类型。
+        Returns:
+            (N, 2) Transformed coordinates in float32 format.
         """
         if pts.size == 0:
             return pts
 
-        # 1. 预处理数据
-        # 保持原函数逻辑：先基于 (0,0) 进行全局缩放
+        # 1. Preprocess data
+        # Keep the original behavior: first apply global scaling around (0,0)
         pts_f64 = pts.astype(np.float64)
         
-        # 2. 确定旋转中心 (Origin)
-        # 原函数基于 target_size 的翻转本质上是围绕图像中心旋转
+        # 2. Determine the rotation center (origin)
+        # In the original function, the target_size-based flip is effectively a rotation around the image center
         # W, H = float(target_size[0]), float(target_size[1])
-        # 3. 构建旋转矩阵 (参考 _apply_rotate_scale_clockwise 逻辑)
-        # 顺时针：θ -> -θ
+        # 3. Build the rotation matrix (following _apply_rotate_scale_clockwise)
+        # Clockwise rotation: theta -> -theta
         th = np.deg2rad(-float(deg))
         c, sin_t = np.cos(th), np.sin(th)
         
-        # 旋转矩阵 R
+        # Rotation matrix R
         R_cw = np.array([[c,  sin_t],
                         [-sin_t, c]], dtype=np.float64) * float(s)
 
-        # 4. 应用仿射变换
-        # 公式: out = (pts - origin) @ R.T + origin
-        # 注意：这里 scale 设为 1.0，因为步骤1中已经处理了缩放 s
+        # 4. Apply the affine transform
+        # Formula: out = (pts - origin) @ R.T + origin
+        # Note: scale is set to 1.0 here because step 1 already applied scaling s
         pts_centered = pts_f64 - origin.reshape(1, 2)
         out = pts_centered @ R_cw.T + origin.reshape(1, 2)
 
-        # 5. 格式恢复 (N, 2) float32
+        # 5. Convert back to (N, 2) float32
         return out.astype(np.float32)
     
     # 1. Initialize & Load
@@ -377,7 +377,7 @@ def align_and_process_images(
     
     
     print(f"Padding fill color (from 10,10): {fill_color}")
-    # ================= 修改结束 =================
+    # ================= End of modification =================
 
     im2_resized = cv2.cvtColor(np.array(im2_pil_raw.resize((W, H))), cv2.COLOR_RGB2BGR)
     im1_resized = cv2.cvtColor(np.array(im1_pil_raw.resize((W, H))), cv2.COLOR_RGB2BGR)
@@ -398,7 +398,7 @@ def align_and_process_images(
         warped_small = warp_image_bspline(im2_aff, tx_bspline, (W, H)).astype(np.uint8)
     
     else:
-        # 默认 Affine
+        # Default: affine
         warped_small = cv2.warpAffine(im2_resized, M, (W, H), borderValue=fill_color)
         
     warped_im2_orig = cv2.resize(warped_small, (orig_W, orig_H), interpolation=cv2.INTER_LINEAR)
@@ -407,24 +407,24 @@ def align_and_process_images(
         print("Processing H5AD coordinates...")
         h5ad_save_path = os.path.join(output_dir, "transformed.h5ad")
         
-        # 1. 定义获取坐标的函数 (保持不变，读取逻辑需与写入逻辑对应)
+        # 1. Define the coordinate-loading helper (reading logic should stay consistent with writing logic)
         def get_coords(adata_obj):
-            # 如果列名存在且在 obs 中，优先从 obs 读取
+            # If both column names exist in obs, read coordinates from obs first
             if x_obs_col and y_obs_col and x_obs_col in adata_obj.obs:
                 print(x_obs_col, y_obs_col)
                 return np.column_stack((adata_obj.obs[x_obs_col], adata_obj.obs[y_obs_col])).astype(np.float32)
-            # 否则从 obsm 读取
+            # Otherwise read coordinates from obsm
             return adata_obj.obsm[spatial_key].copy().astype(np.float32)
 
-        # 2. 【核心修改】：根据存在性判断写入位置
+        # 2. [Core change] Decide where to write coordinates based on column availability
         def update_coords_in_adata(adata_obj, points, x_col, y_col, sp_key):
             """
-            逻辑：
-            1. 判断 x_col 和 y_col 是否非空，且确实是 adata.obs 中的列。
-            2. 如果是 -> 更新 adata.obs。
-            3. 如果否 (参数为空 或 列不存在) -> 更新 adata.obsm[sp_key]。
+            Logic:
+            1. Check whether x_col and y_col are non-empty and truly exist in adata.obs.
+            2. If yes -> update adata.obs.
+            3. If not (arguments are empty or columns do not exist) -> update adata.obsm[sp_key].
             """
-            # 检查是否为有效的 obs 列名
+            # Check whether these are valid obs column names
             if x_col and y_col and (x_col in adata_obj.obs) and (y_col in adata_obj.obs):
                 # print(f"📝 Updating coordinates in adata.obs columns: {x_col}, {y_col}")
                 adata_obj.obs[x_col] = points[:, 0]
@@ -436,14 +436,14 @@ def align_and_process_images(
         if os.path.exists(h5ad_path):
             adata = sc.read_h5ad(h5ad_path)
             
-            # 获取初始坐标
+            # Load the initial coordinates
             pts = get_coords(adata)
             
             # --- Pre-transform (Rotate/Scale) ---
             if (abs(rotate) > 1e-12) or (abs(scale - 1.0) > 1e-12):
                 print(f"🔄 Applying manual pre-transform: rotate={rotate}°, scale={scale}")
                 pts = apply_manual_transform(pts, rotate, scale, origin=origin)
-                # 更新中间结果
+                # Update the intermediate result
                 update_coords_in_adata(adata, pts, x_obs_col, y_obs_col, spatial_key)
 
             # --- Scaling to Registration Resolution ---
@@ -451,7 +451,7 @@ def align_and_process_images(
             pts[:, 0] *= scale_x
             pts[:, 1] *= scale_y
             
-            # 更新中间结果
+            # Update the intermediate result
             update_coords_in_adata(adata, pts, x_obs_col, y_obs_col, spatial_key)
             
             # --- Transform (Registration) ---
@@ -465,7 +465,7 @@ def align_and_process_images(
             else:
                 pts_t = cv2.transform(pts.reshape(-1, 1, 2), M).reshape(-1, 2)
             
-            # 更新中间结果
+            # Update the intermediate result
             update_coords_in_adata(adata, pts_t, x_obs_col, y_obs_col, spatial_key)
                 
             # --- Rescale back to Original Resolution ---
@@ -474,8 +474,8 @@ def align_and_process_images(
             pts_transformed_orig[:, 0] *= scale_x_back
             pts_transformed_orig[:, 1] *= scale_y_back
             
-            # --- Final Update Data (最终保存) ---
-            # 这里会执行你在问题中要求的判断逻辑
+            # --- Final data update (final save) ---
+            # This is where the requested save-location decision logic is applied
             update_coords_in_adata(adata, pts_transformed_orig, x_obs_col, y_obs_col, spatial_key)
             
             # === [Sanitize] Clean _index issues ===

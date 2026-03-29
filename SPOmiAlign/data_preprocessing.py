@@ -9,7 +9,8 @@ import cv2
 
 
 # =========================
-# 工具：强度处理（可选 log + 1-99 分位裁剪 + 归一化到 [0,1] + 可选阈值筛点）
+# Utility: intensity processing (optional log transform, 1-99 percentile clipping,
+# normalization to [0,1], and optional threshold-based point filtering)
 # =========================
 def _prepare_intensity(
     intensity: np.ndarray,
@@ -20,17 +21,17 @@ def _prepare_intensity(
     clip_high: float = 99.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    返回：
-      intensity_norm: [0,1] 浮点
-      keep_mask: bool mask（若 threshold_percentile=None，则全 True）
+    Returns:
+      intensity_norm: [0,1] float array
+      keep_mask: boolean mask (all True when threshold_percentile=None)
     """
     v = np.asarray(intensity, dtype=np.float64)
 
-    # 可选 log1p（统一用 log1p，避免 0 的问题）
+    # Optional log1p transform. Use log1p consistently to avoid issues around 0.
     if intensity_log_transform:
         v = np.log1p(np.maximum(v, 0.0))
 
-    # 1-99 分位裁剪
+    # 1-99 percentile clipping
     p1 = float(np.nanpercentile(v, clip_low))
     p99 = float(np.nanpercentile(v, clip_high))
     if not np.isfinite(p1) or not np.isfinite(p99) or (p99 <= p1):
@@ -42,7 +43,7 @@ def _prepare_intensity(
     v_norm = (v_clip - p1) / (p99 - p1 + 1e-12)
     v_norm = np.clip(v_norm, 0.0, 1.0)
 
-    # 可选阈值（按 v_norm 的分位点）
+    # Optional thresholding based on the percentile of v_norm
     if threshold_percentile is None:
         keep = np.ones(v_norm.shape[0], dtype=bool)
     else:
@@ -53,7 +54,7 @@ def _prepare_intensity(
 
 
 # =========================
-# 工具：点模板（圆 / 方）
+# Utility: point kernel template (circle / square)
 # =========================
 def _make_kernel(radius: int, shape: str = "circle") -> np.ndarray:
     r = int(max(0, radius))
@@ -71,7 +72,8 @@ def _make_kernel(radius: int, shape: str = "circle") -> np.ndarray:
 
 
 # =========================
-# 工具：灰度增强（CLAHE + Gamma + Unsharp），用于最终 uint8 灰度图
+# Utility: grayscale enhancement (CLAHE + gamma + unsharp masking)
+# for the final uint8 grayscale image
 # =========================
 def enhance_gray_uint8(
     gray_uint8: np.ndarray,
@@ -83,8 +85,8 @@ def enhance_gray_uint8(
     unsharp_amount: float = 1.5,
 ) -> np.ndarray:
     """
-    输入/输出：uint8 灰度图 (H, W)
-    gamma < 1 会变亮；gamma > 1 会变暗
+    Input/output: uint8 grayscale image (H, W)
+    gamma < 1 brightens the image; gamma > 1 darkens it
     """
     if gray_uint8.dtype != np.uint8:
         raise ValueError("enhance_gray_uint8 expects uint8 image")
@@ -93,7 +95,7 @@ def enhance_gray_uint8(
     clahe = cv2.createCLAHE(clipLimit=float(clahe_clip), tileGridSize=tuple(clahe_grid))
     g = clahe.apply(gray_uint8)
 
-    # Gamma（保持与你前面一致：invGamma = 1/gamma）
+    # Gamma correction (keep the same convention as before: invGamma = 1/gamma)
     inv_gamma = 1.0 / float(gamma)
     table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in range(256)]).astype(np.uint8)
     g = cv2.LUT(g, table)
@@ -106,7 +108,8 @@ def enhance_gray_uint8(
 
 
 # =========================
-# 工具：顺时针旋转 + 等比缩放（数学坐标系），可选
+# Utility: clockwise rotation + uniform scaling in the mathematical
+# coordinate system, optional
 # =========================
 def _apply_rotate_scale_clockwise(
     x: np.ndarray,
@@ -114,7 +117,7 @@ def _apply_rotate_scale_clockwise(
     *,
     rotate_deg: float = 0.0,
     scale: float = 1.0,
-    origin_mode: str = "data",  # 'data'（质心）|'center'（包围盒中心）|'zero'
+    origin_mode: str = "data",  # 'data' (centroid) | 'center' (bounding-box center) | 'zero'
 ) -> tuple[np.ndarray, np.ndarray]:
     pts = np.vstack([x, y]).T.astype(np.float64)
 
@@ -127,7 +130,7 @@ def _apply_rotate_scale_clockwise(
         origin = np.array([0.0, 0.0], dtype=np.float64)
     else:
         raise ValueError("origin_mode must be 'data'|'center'|'zero'")
-    # 顺时针：θ -> -θ
+    # Clockwise rotation: theta -> -theta
     th = np.deg2rad(-float(rotate_deg))
     c, s = np.cos(th), np.sin(th)
     R_cw = np.array([[c,  s],
@@ -139,7 +142,8 @@ def _apply_rotate_scale_clockwise(
 
 
 # =========================
-# 工具：自动 scale 到 (1152, 864) + 负值平移到 >=0（始终执行、无需参数）
+# Utility: automatically scale to (1152, 864) and shift negative values to >= 0
+# (always applied, no extra parameters needed)
 # =========================
 def _auto_scale_to_canvas_and_shift_nonnegative(
     x: np.ndarray,
@@ -149,19 +153,21 @@ def _auto_scale_to_canvas_and_shift_nonnegative(
     target_h: float = 864.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    自动坐标处理（无参数暴露）：
+    Automatic coordinate processing (no user-facing parameters):
 
-    A) 等比放大规则（同一个 scale 同时乘到 x 和 y）：
-       1) 若 xmax > target_w 且 ymax > target_h：不做 scale
-       2) 若仅 xmax <= target_w：scale = target_w / xmax
-       3) 若仅 ymax <= target_h：scale = target_h / ymax
-       4) 若 xmax <= target_w 且 ymax <= target_h：scale = max(target_w/xmax, target_h/ymax)
+    A) Uniform upscaling rule (the same scale is applied to both x and y):
+       1) If xmax > target_w and ymax > target_h: do not scale
+       2) If only xmax <= target_w: scale = target_w / xmax
+       3) If only ymax <= target_h: scale = target_h / ymax
+       4) If xmax <= target_w and ymax <= target_h:
+          scale = max(target_w/xmax, target_h/ymax)
 
-    B) 若存在负值：整体平移到 >=0
+    B) If negative values exist: shift everything so coordinates become >= 0
        x += -min(x) if min(x)<0
        y += -min(y) if min(y)<0
 
-    注意：该过程不会强制输出画布尺寸=1152×864；PNG 尺寸仍由变换后的坐标最大值决定。
+    Note: this step does not force the output canvas size to be 1152x864.
+    The PNG size is still determined by the maximum transformed coordinates.
     """
     x = np.asarray(x, dtype=np.float64).copy()
     y = np.asarray(y, dtype=np.float64).copy()
@@ -200,7 +206,7 @@ def _only_shift_nonnegative(
     y: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    仅负值平移到 >=0（无参数暴露）：
+    Shift negative values to >= 0 only (no user-facing parameters):
        x += -min(x) if min(x)<0
        y += -min(y) if min(y)<0
     """
@@ -222,34 +228,37 @@ def _only_shift_nonnegative(
 
 
 # =========================
-# 核心：h5ad -> 像素级栅格化灰度图（可选增强）
+# Core: h5ad -> pixel-level rasterized grayscale image
+# with optional enhancement
 # =========================
 def rasterize_h5ad_to_image(
     *,
     input_h5ad: str,
     output_png: str,
 
-    # 坐标来源：默认使用 obsm['spatial'] 的两列
+    # Coordinate source: by default, use the first two columns of obsm['spatial']
     spatial_key: str = "spatial",
     x_obs_col: str | None = None,
     y_obs_col: str | None = None,
 
-    # 强度：默认 X.sum(axis=1)；若要用 obs 列，则 intensity_mode="obs_col" 且传 intensity_obs_col
+    # Intensity: use X.sum(axis=1) by default. To use an obs column instead,
+    # set intensity_mode="obs_col" and provide intensity_obs_col.
     intensity_mode: str = "X_sum",       # "X_sum" | "obs_col"
     intensity_obs_col: str | None = None,
 
-    # 强度统一：可选 log1p；统一 1-99 分位裁剪 + 归一化；可选阈值筛点
+    # Unified intensity handling: optional log1p, shared 1-99 percentile clipping,
+    # normalization, and optional threshold-based point filtering
     intensity_log_transform: bool = False,
-    threshold_percentile: float | None = None,  # 例如 80；None 表示不阈值
+    threshold_percentile: float | None = None,  # For example 80; None disables thresholding
 
-    # 叠加规则（默认白底黑点）
+    # Overlay rule (default: white background with black points)
     background: str = "white",  # "white" | "black"
 
-    # 点形状与大小
+    # Point shape and size
     point_shape: str = "circle",  # "circle" | "square"
     radius: int = 5,
 
-    # 可选：输出前增强（CLAHE+Gamma+Unsharp）
+    # Optional enhancement before output (CLAHE + gamma + unsharp masking)
     enhance: bool = False,
     clahe_clip: float = 4.0,
     clahe_grid: tuple[int, int] = (8, 8),
@@ -258,48 +267,53 @@ def rasterize_h5ad_to_image(
     unsharp_sigma: float = 1.0,
     unsharp_amount: float = 1.5,
 
-    # 可选：用户指定的 rotate/scale（不传则默认不做）
-    rotate: float = 0.0,            # 顺时针角度
-    scale: float = 1.0,             # 等比缩放
+    # Optional user-specified rotate/scale settings
+    rotate: float = 0.0,            # Clockwise rotation angle
+    scale: float = 1.0,             # Uniform scaling factor
     rotate_origin: str = "data",    # 'data'|'center'|'zero'
 
-    canvas_size: tuple[int, int] | None = None,  # 新增：(width, height)
+    canvas_size: tuple[int, int] | None = None,  # Added: (width, height)
 ):
     """
-    输出：
-      - output_png：像素级栅格化灰度图（默认白底黑点）
+    Output:
+      - output_png: pixel-level rasterized grayscale image
+        (default: white background with black points)
     """
     os.makedirs(os.path.dirname(output_png), exist_ok=True)
 
     adata = sc.read_h5ad(input_h5ad)
 
-    # ===== 取坐标 =====
+    # ===== Read coordinates =====
     if x_obs_col is not None and y_obs_col is not None:
         x = np.asarray(adata.obs[x_obs_col], dtype=np.float64)
         y = np.asarray(adata.obs[y_obs_col], dtype=np.float64)
     else:
         if spatial_key not in adata.obsm:
-            raise KeyError(f"obsm['{spatial_key}'] 不存在；请传 x_obs_col/y_obs_col 指定坐标列")
+            raise KeyError(
+                f"obsm['{spatial_key}'] does not exist; please provide x_obs_col/y_obs_col "
+                "to specify coordinate columns"
+            )
         xy = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
         if xy.ndim != 2 or xy.shape[1] < 2:
-            raise ValueError(f"obsm['{spatial_key}'] 形状应为 (N,2+)；实际 {xy.shape}")
+            raise ValueError(f"obsm['{spatial_key}'] must have shape (N,2+); got {xy.shape}")
         x, y = xy[:, 0], xy[:, 1]
 
-    # ===== 取强度（raw）=====
+    # ===== Read raw intensity =====
     if intensity_mode == "X_sum":
-        # 兼容稀疏矩阵
+        # Compatible with sparse matrices
         try:
             intensity_raw = np.array(adata.X.sum(axis=1)).reshape(-1)
         except Exception:
             intensity_raw = np.asarray(adata.X.sum(axis=1)).ravel()
     elif intensity_mode == "obs_col":
         if not intensity_obs_col:
-            raise ValueError("intensity_mode='obs_col' 时必须提供 intensity_obs_col")
+            raise ValueError("intensity_obs_col must be provided when intensity_mode='obs_col'")
         intensity_raw = np.asarray(adata.obs[intensity_obs_col], dtype=np.float64)
     else:
         raise ValueError("intensity_mode must be 'X_sum' or 'obs_col'")
 
-    # ===== 统一强度处理：可选log + 1-99 clip + 归一化 + 可选阈值 =====
+    # ===== Unified intensity processing: optional log, 1-99 clipping,
+    # normalization, and optional thresholding =====
     intensity_norm, keep_mask = _prepare_intensity(
         intensity_raw,
         intensity_log_transform=bool(intensity_log_transform),
@@ -308,21 +322,25 @@ def rasterize_h5ad_to_image(
         clip_high=99.0,
     )
 
-    # 可选：保留在 adata.obs 里（供调试/后续使用），虽然不再写出 h5ad
+    # Optional: keep these values in adata.obs for debugging or downstream use,
+    # even though they are not written back to h5ad here
     adata.obs["render_intensity_raw"] = intensity_raw
     adata.obs["render_intensity_norm"] = intensity_norm
     adata.obs["render_keep"] = keep_mask.astype(np.int8)
 
-    # ===== 过滤有效点（坐标/强度有效 且 keep）=====
+    # ===== Filter valid points (valid coordinates/intensity and keep=True) =====
     valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(intensity_norm) & keep_mask
     x = x[valid]
     y = y[valid]
     v = intensity_norm[valid]
 
     if x.size == 0:
-        raise ValueError("有效点数为 0：请检查坐标/强度列，或 threshold_percentile 是否过高")
+        raise ValueError(
+            "The number of valid points is 0. Please check the coordinate/intensity columns, "
+            "or lower threshold_percentile."
+        )
     origin=None
-    # ===== 坐标：可选（用户指定）的顺时针旋转 + 缩放 =====
+    # ===== Coordinates: optional user-specified clockwise rotation + scaling =====
     if (abs(float(rotate)) > 1e-12) or (abs(float(scale) - 1.0) > 1e-12):
         x, y,origin = _apply_rotate_scale_clockwise(
             x, y,
@@ -331,29 +349,30 @@ def rasterize_h5ad_to_image(
             origin_mode=str(rotate_origin),
         )
 
-    # ===== 坐标：自动 scale 到 1152×864 + 负值平移到 >=0（始终执行，无需参数）=====
+    # ===== Coordinates: automatically scale to 1152x864 and shift negatives to >= 0
+    # (always applied, no parameters needed) =====
     # x, y = _auto_scale_to_canvas_and_shift_nonnegative(x, y)
     
 
-    # ===== 像素化坐标（四舍五入到像素）=====
+    # ===== Convert coordinates to pixels (round to the nearest pixel) =====
     x_pix = np.rint(x).astype(np.int32)
     y_pix = np.rint(y).astype(np.int32)
 
     if canvas_size is not None:
-        # 用户指定了分辨率 (W, H)
+        # User-specified resolution (W, H)
         W, H = canvas_size
     else:
-        # 自动计算分辨率
+        # Automatically compute resolution
         W = int(x_pix.max()) + 1
         H = int(y_pix.max()) + 1
 
     if W <= 0 or H <= 0:
-        raise ValueError(f"非法尺寸：W={W}, H={H}")
+        raise ValueError(f"Invalid canvas size: W={W}, H={H}")
 
-    # ===== 背景与“点更暗/更亮”的规则 =====
-    # 统一使用 v in [0,1]：
-    # - 白底黑点：背景=1.0，点值越大越黑 => val = 1 - v
-    # - 黑底白点：背景=0.0，点值越大越白 => val = v
+    # ===== Background and the darker/brighter point rule =====
+    # Always use v in [0,1]:
+    # - white background with black points: background=1.0, larger values mean darker points
+    # - black background with white points: background=0.0, larger values mean brighter points
     bg = background.lower()
     if bg not in ("white", "black"):
         raise ValueError("background must be 'white' or 'black'")
@@ -361,17 +380,17 @@ def rasterize_h5ad_to_image(
     if bg == "white":
         img = np.ones((H, W), dtype=np.float32)
         vals = 1.0 - v
-        take_darker = True   # 用 min 叠加（更黑）
+        take_darker = True   # Use min for overlay so darker values win
     else:
         img = np.zeros((H, W), dtype=np.float32)
         vals = v
-        take_darker = False  # 用 max 叠加（更白）
+        take_darker = False  # Use max for overlay so brighter values win
 
-    # ===== 点模板（圆/方）=====
+    # ===== Point kernel template (circle / square) =====
     kernel = _make_kernel(radius=int(radius), shape=str(point_shape))
     r = int(max(0, radius))
 
-    # ===== 栅格化叠加（像素级盖印）=====
+    # ===== Rasterized overlay (pixel-level stamping) =====
     for xv, yv, val in zip(x_pix, y_pix, vals):
         # patch bbox
         r0 = yv - r
@@ -395,13 +414,13 @@ def rasterize_h5ad_to_image(
         patch = float(val) * kernel[kr0:kr1, kc0:kc1]
 
         if take_darker:
-            # 白底黑点：用 min 让更黑覆盖
+            # White background with black points: use min so darker values overwrite
             img[rr0:rr1, cc0:cc1] = np.minimum(img[rr0:rr1, cc0:cc1], patch)
         else:
-            # 黑底白点：用 max 让更白覆盖
+            # Black background with white points: use max so brighter values overwrite
             img[rr0:rr1, cc0:cc1] = np.maximum(img[rr0:rr1, cc0:cc1], patch)
 
-    # ===== 保存 PNG =====
+    # ===== Save PNG =====
     img_u8 = np.clip(img * 255.0, 0, 255).astype(np.uint8)
 
     if enhance:
@@ -416,29 +435,32 @@ def rasterize_h5ad_to_image(
         )
 
     Image.fromarray(img_u8, mode="L").save(output_png)
-    print(f"✅ PNG 已保存：{output_png}（{W}×{H}，background={background}，shape={point_shape}，radius={radius}）")
+    print(
+        f"[OK] PNG saved: {output_png} "
+        f"({W}x{H}, background={background}, shape={point_shape}, radius={radius})"
+    )
 
     return output_png,origin
 
 # =========================
-# 调用示例
+# Usage examples
 # =========================
 if __name__ == "__main__":
-    # 例1：MERFISH（默认 spatial_key='spatial'，默认 intensity_mode='X_sum'）
+    # Example 1: MERFISH (default spatial_key='spatial', default intensity_mode='X_sum')
     rasterize_h5ad_to_image(
         input_h5ad="/mnt/A3/ivy/register_data/SPOmiAlign_Repro/data_preprocessing/Zhuang-ABCA-3-log2-metadata_08.h5ad",
         output_png="/mnt/A3/ivy/register_data/SPOmiAlign_Repro/output_image/merfish_008.png",
         background="black",
         point_shape="circle",
         radius=1,
-        threshold_percentile=None,      # 不阈值
-        intensity_log_transform=False,  # 你的 X 已 log2，通常不再 log
+        threshold_percentile=None,      # No thresholding
+        intensity_log_transform=False,  # X is already log2-transformed, so no extra log is needed
         enhance=True,
         rotate=0.0,
         scale=1.0,
     )
 
-    # 例2：Slide-seq 43（用 obs 列作为强度，且 80 分位筛点）
+    # Example 2: Slide-seq 43 (use an obs column as intensity and keep points above the 80th percentile)
     rasterize_h5ad_to_image(
         input_h5ad="/mnt/A3/ivy/register_data/SPOmiAlign_Repro/data_preprocessing/Puck_Num_43.h5ad",
         output_png="/mnt/A3/ivy/register_data/SPOmiAlign_Repro/output_image/Puck_Num_43.png",
@@ -446,17 +468,17 @@ if __name__ == "__main__":
         y_obs_col="Raw_Slideseq_Y",
         # intensity_mode="obs_col",
         intensity_obs_col="nFeature_Spatial",
-        intensity_log_transform=True,   # nFeature 计数建议 log1p
-        threshold_percentile=80,        # 80 分位筛点
+        intensity_log_transform=True,   # log1p is recommended for nFeature counts
+        threshold_percentile=80,        # Keep points above the 80th percentile
         background="black",
         point_shape="circle",
         radius=5,
-        enhance=True,                  # 你前面那套增强
+        enhance=True,                  # Reuse the existing enhancement pipeline
         rotate=90,
         scale=1.0,
     )
 
-    # 例2：Slide-seq 29（用 obs 列作为强度，且 80 分位筛点）
+    # Example 3: Slide-seq 29 (use an obs column as intensity and keep points above the 80th percentile)
     rasterize_h5ad_to_image(
         input_h5ad="/mnt/A3/ivy/register_data/SPOmiAlign_Repro/data_preprocessing/Puck_Num_29.h5ad",
         output_png="/mnt/A3/ivy/register_data/SPOmiAlign_Repro/output_image/Puck_Num_29.png",
@@ -464,24 +486,24 @@ if __name__ == "__main__":
         y_obs_col="Raw_Slideseq_Y",
         # intensity_mode="obs_col",
         intensity_obs_col="nFeature_Spatial",
-        intensity_log_transform=True,   # nFeature 计数建议 log1p
-        threshold_percentile=80,        # 80 分位筛点
+        intensity_log_transform=True,   # log1p is recommended for nFeature counts
+        threshold_percentile=80,        # Keep points above the 80th percentile
         background="black",
         point_shape="circle",
         radius=5,
-        enhance=True,                  # 你前面那套增强
+        enhance=True,                  # Reuse the existing enhancement pipeline
         rotate=180,
         scale=1.0,
     )
-    #例3:sm、st、sp
+    # Example 4: SM, ST, and SP
     rasterize_h5ad_to_image(
         input_h5ad="/mnt/A3/ivy/register_data/3omics/Cerebellum-PLATO.h5ad",
         output_png="/mnt/A3/ivy/register_data/SPOmiAlign_Repro/output_image/sp.png",
         background="white",
         point_shape="square",
         radius=15,
-        threshold_percentile=None,      # 不阈值
-        intensity_log_transform=False,  # 你的 X 已 log2，通常不再 log
+        threshold_percentile=None,      # No thresholding
+        intensity_log_transform=False,  # X is already log2-transformed, so no extra log is needed
         enhance=False,
         rotate=0.0,
         scale=1.0,
@@ -493,8 +515,8 @@ if __name__ == "__main__":
         background="white",
         point_shape="square",
         radius=15,
-        threshold_percentile=None,      # 不阈值
-        intensity_log_transform=False,  # 你的 X 已 log2，通常不再 log
+        threshold_percentile=None,      # No thresholding
+        intensity_log_transform=False,  # X is already log2-transformed, so no extra log is needed
         enhance=False,
         rotate=0.0,
         scale=1.0,
@@ -506,10 +528,9 @@ if __name__ == "__main__":
         background="white",
         point_shape="square",
         radius=12,
-        threshold_percentile=None,      # 不阈值
-        intensity_log_transform=False,  # 你的 X 已 log2，通常不再 log
+        threshold_percentile=None,      # No thresholding
+        intensity_log_transform=False,  # X is already log2-transformed, so no extra log is needed
         enhance=False,
         rotate=60.0,
         scale=0.6,
     )
-

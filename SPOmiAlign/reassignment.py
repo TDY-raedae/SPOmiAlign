@@ -10,24 +10,24 @@ from typing import Optional, Union, List
 
 
 # =========================
-# 工具函数：计算内部最近邻距离均值
+# Utility function: compute the mean internal nearest-neighbor distance
 # =========================
 def mean_internal_nn_distance(xy: np.ndarray):
     """
-    给定 N×2 坐标矩阵 xy，计算每个点到其最近邻（排除自身）的距离，
-    返回 (均值, 所有最近邻距离向量)。
+    Given an N x 2 coordinate matrix `xy`, compute the distance from each point to its nearest neighbor (excluding itself).
+    Return (mean_distance, all nearest-neighbor distances).
     """
     if xy.shape[0] < 2:
         return 0.0, np.zeros(xy.shape[0], dtype=float)
 
     tree = cKDTree(xy)
-    dist, _ = tree.query(xy, k=2)  # 第1个是自己，第2个是最近邻
+    dist, _ = tree.query(xy, k=2)  # The first result is the point itself; the second is its nearest neighbor.
     nn = dist[:, 1]
     return float(np.mean(nn)), nn
 
 
 # =========================
-# 从两个 h5ad 的 obsm['spatial'] 自动判断分辨率 + NN 映射
+# Automatically infer resolution from two h5ad files using obsm['spatial'] and build a nearest-neighbor mapping
 # =========================
 def compute_nn_mapping_from_h5ads(
     adata_s1: AnnData,
@@ -35,42 +35,42 @@ def compute_nn_mapping_from_h5ads(
     id_col: str = "id",
 ):
     """
-    使用两个 h5ad 中的 obsm['spatial'] 坐标：
+    Use the obsm['spatial'] coordinates from two h5ad files:
 
-      1) 从 adata_s1, adata_s2 的 obsm['spatial'] 中读取 xy 坐标（取前两列）
-      2) 分别计算 S1 / S2 内部最近邻距离均值
-      3) 均值大的判定为“低分辨率”，均值小的为“高分辨率”
-      4) 用 高分辨率点 -> 低分辨率点 做最近邻（cKDTree）
-      5) 过滤：若 dist > 2 * d_ref_max（d_ref_max = 低分辨率内部最近邻最大值），删除该高分辨率点
+      1) Read xy coordinates from the first two columns of obsm['spatial'] in adata_s1 and adata_s2.
+      2) Compute the mean internal nearest-neighbor distance for S1 and S2.
+      3) Treat the larger mean as low resolution and the smaller mean as high resolution.
+      4) Run nearest-neighbor search from high-resolution points -> low-resolution points using cKDTree.
+      5) Filter out high-resolution points when dist > 2 * d_ref_max, where d_ref_max is the maximum internal nearest-neighbor distance in the low-resolution slice.
 
-    返回：
-      mapping_df: DataFrame，列包括：
+    Returns:
+      mapping_df: DataFrame with columns:
         - high_id, low_id
         - high_x, high_y
         - low_x, low_y
         - distance
         - high_index, low_index
 
-      meta: dict，包含：
+      meta: dict containing:
         - low_res_name   : "S1" or "S2"
         - high_res_name  : "S1" or "S2"
         - d_ref_max      : float
     """
     if "spatial" not in adata_s1.obsm_keys():
-        raise KeyError("adata_s1.obsm 中没有 'spatial' 键。")
+        raise KeyError("adata_s1.obsm does not contain the 'spatial' key.")
     if "spatial" not in adata_s2.obsm_keys():
-        raise KeyError("adata_s2.obsm 中没有 'spatial' 键。")
+        raise KeyError("adata_s2.obsm does not contain the 'spatial' key.")
 
     xy1 = np.asarray(adata_s1.obsm["spatial"])
     xy2 = np.asarray(adata_s2.obsm["spatial"])
 
     if xy1.shape[1] < 2 or xy2.shape[1] < 2:
-        raise ValueError("obsm['spatial'] 至少需要两列坐标（x,y）。")
+        raise ValueError("obsm['spatial'] must contain at least two coordinate columns (x, y).")
 
     xy1 = xy1[:, :2]
     xy2 = xy2[:, :2]
 
-    # 清理 NA/Inf
+    # Remove NA/Inf coordinates.
     def clean_xy(xy):
         mask = np.isfinite(xy).all(axis=1)
         return xy[mask, :], mask
@@ -79,17 +79,17 @@ def compute_nn_mapping_from_h5ads(
     xy2_clean, mask2 = clean_xy(xy2)
 
     if xy1_clean.shape[0] == 0 or xy2_clean.shape[0] == 0:
-        raise ValueError("S1 或 S2 有效坐标为空（全是 NA/Inf？）。")
+        raise ValueError("S1 or S2 has no valid coordinates left (all values are NA/Inf?).")
 
-    print(f"S1 有效坐标点数: {xy1_clean.shape[0]} / {xy1.shape[0]}")
-    print(f"S2 有效坐标点数: {xy2_clean.shape[0]} / {xy2.shape[0]}")
+    print(f"S1 valid coordinate count: {xy1_clean.shape[0]} / {xy1.shape[0]}")
+    print(f"S2 valid coordinate count: {xy2_clean.shape[0]} / {xy2.shape[0]}")
 
-    # 内部最近邻均值（均值越大 -> 越稀疏 -> 低分辨率）
+    # Internal nearest-neighbor mean distance (larger mean -> sparser sampling -> lower resolution)
     mean_s1, nn_s1 = mean_internal_nn_distance(xy1_clean)
     mean_s2, nn_s2 = mean_internal_nn_distance(xy2_clean)
 
-    print(f"S1 内部最近邻距离均值: {mean_s1:.4f}")
-    print(f"S2 内部最近邻距离均值: {mean_s2:.4f}")
+    print(f"S1 mean internal nearest-neighbor distance: {mean_s1:.4f}")
+    print(f"S2 mean internal nearest-neighbor distance: {mean_s2:.4f}")
 
     if mean_s1 > mean_s2:
         low_res_name = "S1"
@@ -106,35 +106,35 @@ def compute_nn_mapping_from_h5ads(
         nn_low = nn_s2
         adata_low, adata_high = adata_s2, adata_s1
 
-    print(f"\n自动判断：{low_res_name} = 低分辨率，{high_res_name} = 高分辨率")
+    print(f"\nAutomatically determined: {low_res_name} = low resolution，{high_res_name} = high resolution")
 
     d_ref_max = float(np.max(nn_low)) if nn_low.size > 0 else 0.0
-    print(f"低分辨率切片内部最近邻最大距离 d_ref_max = {d_ref_max:.4f}")
+    print(f"Maximum internal nearest-neighbor distance in the low-resolution slice, d_ref_max = {d_ref_max:.4f}")
 
-    # 有效点的原始索引
+    # Original indices for valid points.
     high_indices_all = np.where(high_mask)[0]
     low_indices_all = np.where(low_mask)[0]
 
-    # 高分辨率 -> 低分辨率 最近邻
-    print("\n--- 高分辨率 → 低分辨率 最近邻搜索 ---")
+    # High-resolution -> low-resolution nearest-neighbor search.
+    print("\n--- High-resolution -> low-resolution nearest-neighbor search ---")
     tree = cKDTree(low_xy)
     dist, idx = tree.query(high_xy, k=1)
 
-    # 距离过滤
+    # Distance-based filtering.
     if d_ref_max > 0:
         valid = dist <= 2.0 * d_ref_max
     else:
         valid = np.ones_like(dist, dtype=bool)
 
     n_drop = int(np.sum(~valid))
-    print(f"距离过滤：删除 {n_drop} 个高分辨率点（dist > 2 * d_ref_max）。")
+    print(f"Distance filtering: removed {n_drop} high-resolution points (dist > 2 * d_ref_max).")
 
     dist_f = dist[valid]
     idx_f = idx[valid]
     high_idx_clean = high_indices_all[valid]
     low_idx_clean = low_indices_all[idx_f]
 
-    # 生成 id
+    # Build IDs.
     def get_ids(adata, id_col_name):
         if id_col_name in adata.obs.columns:
             return adata.obs[id_col_name].astype(str).to_numpy()
@@ -157,7 +157,7 @@ def compute_nn_mapping_from_h5ads(
         }
     )
 
-    print("\n映射表前几行：")
+    print("\nFirst rows of the mapping table:")
     print(mapping.head())
 
     meta = {
@@ -169,7 +169,7 @@ def compute_nn_mapping_from_h5ads(
 
 
 # =========================
-# 根据 mapping + 两个 h5ad 构建新的 h5ad
+# Build a new h5ad from the mapping and two input h5ad files
 # =========================
 def build_reassigned_h5ad_from_mapping(
     mapping: pd.DataFrame,
@@ -183,15 +183,15 @@ def build_reassigned_h5ad_from_mapping(
     scale_by_mapping_factor: bool = True,
 ):
     """
-    构建新 h5ad：
+    Build a new h5ad:
 
-      - 低分辨率 h5ad 提供表达矩阵
-      - 新 obsm['spatial'] 用高分辨率点坐标
-      - 每个新点的表达 = 对应 low_index 的表达（可选 1/k 缩放）
-      - cluster 从低分辨率 h5ad 映射（若存在）
-      - （可选）保留低分辨率切片的 Manual_annotation（如果存在）
-      - 额外新增：从高分辨率切片拷贝指定的多个 obs 列
-        写入列名为 {high}_{col}（例如 s2_cluster, s2_barcode_S2）
+      - The low-resolution h5ad provides the expression matrix.
+      - The new obsm['spatial'] uses high-resolution coordinates.
+      - Each new point copies the expression from its corresponding low_index, with optional 1/k scaling.
+      - cluster is mapped from the low-resolution h5ad when available.
+      - Optionally preserve Manual_annotation from the low-resolution slice.
+      - Additionally copy selected obs columns from the high-resolution slice.
+        Output names follow {high}_{col} when needed (for example s2_cluster or s2_barcode_S2).
     """
     if meta["low_res_name"] == "S1":
         adata_low = adata_s1
@@ -204,18 +204,18 @@ def build_reassigned_h5ad_from_mapping(
         low_name = "S2"
         high_name = "S1"
 
-    print(f"\n在 h5ad 中：{low_name} 用作低分辨率表达提供者，{high_name} 用作高分辨率空间参考。")
+    print(f"\nIn the reassigned h5ad: {low_name} is used as the low-resolution expression donor, and {high_name} is used as the high-resolution spatial reference.")
 
     if mapping.shape[0] == 0:
-        raise ValueError("mapping 为空，没有任何匹配点。")
+        raise ValueError("The mapping is empty; no matched points were found.")
 
     low_idx = mapping["low_index"].to_numpy(dtype=int)
     high_idx = mapping["high_index"].to_numpy(dtype=int)
 
-    # ---- 抽取低分辨率表达矩阵 ----
+    # ---- Extract the low-resolution expression matrix ----
     X_low = adata_low.X
     if sparse.isspmatrix_coo(X_low):
-        print("ℹ️ 检测到低分辨率 X 为 coo_matrix，转换为 csr_matrix。")
+        print("[INFO] Low-resolution X is a coo_matrix; converting it to csr_matrix.")
         X_low = X_low.tocsr()
 
     if sparse.issparse(X_low):
@@ -223,23 +223,23 @@ def build_reassigned_h5ad_from_mapping(
     else:
         X_new = np.asarray(X_low)[low_idx, :]
 
-    # ---- 1/k 缩放 ----
+    # ---- 1/k scaling ----
     if scale_by_mapping_factor:
         count_map = pd.Series(low_idx).value_counts()
         mapping_factor = pd.Series(low_idx).map(count_map).to_numpy()
         if np.any(mapping_factor <= 0):
-            raise ValueError("检测到 mapping_factor <= 0，映射计数异常。")
+            raise ValueError("Detected mapping_factor <= 0; the mapping count is invalid.")
         scale = 1.0 / mapping_factor
 
         if sparse.issparse(X_new):
             X_new = X_new.multiply(scale[:, None])
             if sparse.isspmatrix_coo(X_new):
-                print("ℹ️ X_new 为 coo_matrix，转换为 csr_matrix 以便写入 h5ad。")
+                print("[INFO] X_new is a coo_matrix; converting it to csr_matrix before writing the h5ad file.")
                 X_new = X_new.tocsr()
         else:
             X_new = X_new * scale[:, None]
 
-    # ---- 组装 obs ----
+    # ---- Build obs ----
     n_obs_new = mapping.shape[0]
     obs_names = [f"reassign_{i}" for i in range(n_obs_new)]
     obs = pd.DataFrame(index=pd.Index(obs_names, name=None))
@@ -247,7 +247,7 @@ def build_reassigned_h5ad_from_mapping(
     obs["low_id"] = mapping["low_id"].astype(str).values
     obs["high_id"] = mapping["high_id"].astype(str).values
 
-    # cluster 映射（来自低分辨率）
+    # Map cluster from the low-resolution slice.
     if cluster_col in adata_low.obs.columns:
         col_src = adata_low.obs[cluster_col]
         col_src_str = col_src.astype(str)
@@ -255,19 +255,19 @@ def build_reassigned_h5ad_from_mapping(
         mapped_cluster_str = col_src_str.iloc[low_idx].reset_index(drop=True)
         obs["cluster"] = pd.Categorical(mapped_cluster_str.values, categories=cats, ordered=False)
     else:
-        print(f"ℹ️ 低分辨率 h5ad 中无 obs['{cluster_col}']，跳过 cluster 映射。")
+        print(f"[INFO] The low-resolution h5ad has no obs['{cluster_col}']; skipping cluster mapping.")
 
-    # ---- 保留低分辨率的 Manual_annotation（如果存在）----
+    # ---- Preserve Manual_annotation from the low-resolution slice if available ----
     low_obs_sel = adata_low.obs.iloc[low_idx].copy().reset_index(drop=True)
     if "Manual_annotation" in low_obs_sel.columns:
         obs["Manual_annotation"] = low_obs_sel["Manual_annotation"].astype(str).values
     else:
-        print("ℹ️ 低分辨率 h5ad 中无 obs['Manual_annotation']，跳过写入 Manual_annotation。")
+        print("[INFO] The low-resolution h5ad has no obs['Manual_annotation']; skipping Manual_annotation.")
 
-    # ---- 新增：高分辨率切片指定列（支持多个；找不到则跳过）----
+    # ---- Additional high-resolution columns to copy (supports multiple columns; missing columns are skipped) ----
     high_obs_sel = adata_high.obs.iloc[high_idx].copy().reset_index(drop=True)
 
-    # 统一成 list
+    # Normalize the argument into a list.
     if isinstance(s2_cluster_col, str):
         s2_cols = [s2_cluster_col]
     else:
@@ -280,37 +280,37 @@ def build_reassigned_h5ad_from_mapping(
     #         obs[new_col_name] = high_obs_sel[col].astype(str).values
     #         written_cols.append(new_col_name)
     #     else:
-    #         print(f"⚠️ 高分辨率({high_name}) h5ad 中无 obs['{col}']，跳过该列。")
+    #         print(f"[WARNING] The high-resolution ({high_name}) h5ad has no obs['{col}']; skipping this column.")
     for col in s2_cols:
         if col not in high_obs_sel.columns:
-            print(f"⚠️ 高分辨率({high_name}) h5ad 中无 obs['{col}']，跳过该列。")
+            print(f"[WARNING] The high-resolution ({high_name}) h5ad has no obs['{col}']; skipping this column.")
             continue
 
-        # 默认：不加前缀
+        # Default behavior: do not add a prefix.
         out_name = col
 
-        # 如果新 h5ad（obs）里已存在同名列，则不覆盖，改用前缀名写入
+        # If the new h5ad obs already contains the same column name, do not overwrite it; write the high-resolution column using a prefixed name instead.
         if out_name in obs.columns:
             out_name = f"{high_name.lower()}_{col}"
             print(
-                f"⚠️ 新 h5ad 中已存在 obs['{col}']，不覆盖；"
-                f"高分辨率({high_name}) 的列将写入 obs['{out_name}']。"
+                f"[WARNING] obs['{col}'] already exists in the new h5ad and will not be overwritten; "
+                f"the high-resolution ({high_name}) column will be written to obs['{out_name}'] instead."
             )
 
         obs[out_name] = high_obs_sel[col].astype(str).values
 
 
-    # ---- var 继承自低分辨率 ----
+    # ---- Inherit var from the low-resolution data ----
     var = adata_low.var.copy()
     var_names = adata_low.var_names.copy()
 
     adata_new = AnnData(X=X_new, obs=obs, var=var)
     adata_new.var_names = var_names
 
-    # ---- 空间坐标：用高分辨率坐标 ----
+    # ---- Spatial coordinates: use the high-resolution coordinates ----
     adata_new.obsm["spatial"] = mapping[["high_x", "high_y"]].to_numpy(dtype=float)
 
-    # 距离信息（不是 annotation 列）
+    # Distance information (not an annotation column)
     adata_new.obs["knn_dist"] = mapping["distance"].values
 
     # meta
@@ -322,15 +322,15 @@ def build_reassigned_h5ad_from_mapping(
         "written_high_obs_cols": written_cols,
     }
 
-    # ---- 保存 ----
+    # ---- Save ----
     out_dir = os.path.dirname(out_h5ad)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
     adata_new.write_h5ad(out_h5ad, compression="gzip")
-    print(f"\n✅ 新 h5ad 已保存：{out_h5ad}")
-    print(f"   形状：{adata_new.n_obs} × {adata_new.n_vars}")
-    print("   obs 列包含：", list(adata_new.obs.columns))
-    print("   obsm 包含：", list(adata_new.obsm.keys()))
+    print(f"\n[OK] New h5ad saved: {out_h5ad}")
+    print(f"   Shape: {adata_new.n_obs} × {adata_new.n_vars}")
+    print("   obs columns:", list(adata_new.obs.columns))
+    print("   obsm keys:", list(adata_new.obsm.keys()))
     if "cluster" in adata_new.obs:
         print("   cluster dtype:", adata_new.obs["cluster"].dtype)
     else:
@@ -340,7 +340,7 @@ def build_reassigned_h5ad_from_mapping(
 
 
 # =========================
-# 总管函数：spomialign_reassignment
+# Pipeline entry function: spomialign_reassignment
 # =========================
 def spomialign_reassignment(
     s1_h5ad: str,
@@ -353,11 +353,11 @@ def spomialign_reassignment(
     scale_by_mapping_factor: bool = True,
 ):
     """
-    SPOmiAlign reassignment pipeline（纯 h5ad 版本）
+    SPOmiAlign reassignment pipeline (pure h5ad version)
     """
-    print(f"读取 S1 h5ad: {s1_h5ad}")
+    print(f"Reading S1 h5ad: {s1_h5ad}")
     adata_s1 = sc.read_h5ad(s1_h5ad)
-    print(f"读取 S2 h5ad: {s2_h5ad}")
+    print(f"Reading S2 h5ad: {s2_h5ad}")
     adata_s2 = sc.read_h5ad(s2_h5ad)
 
     mapping, meta = compute_nn_mapping_from_h5ads(
@@ -371,7 +371,7 @@ def spomialign_reassignment(
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
         mapping.to_csv(map_csv, index=False)
-        print(f"\n中间映射表已保存：{map_csv}")
+        print(f"\nIntermediate mapping table saved: {map_csv}")
 
     adata_new = build_reassigned_h5ad_from_mapping(
         mapping=mapping,
@@ -388,35 +388,35 @@ def spomialign_reassignment(
 
 
 # =========================
-# 命令行入口
+# Command-line entry point
 # =========================
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "SPOmiAlign reassignment（纯 h5ad 版本）：\n"
-            "自动判断 S1/S2 哪个是高分辨率/低分辨率，高分辨率点在低分辨率上找最近邻，"
-            "并构建带有低分辨率表达的新 h5ad。\n"
-            "新 h5ad 会（若存在）保留低分辨率 Manual_annotation，"
-            "并额外新增多个高分辨率 obs 列：{high}_{col}（例如 s2_cluster）。"
+            "SPOmiAlign reassignment (pure h5ad version):\n"
+            "Automatically determine which of S1/S2 is high resolution or low resolution, then search nearest neighbors from high-resolution points to low-resolution points, "
+            "and build a new h5ad with expression inherited from the low-resolution slice.\n"
+            "The new h5ad preserves low-resolution Manual_annotation when available, "
+            "and can also append multiple high-resolution obs columns such as {high}_{col} (for example s2_cluster)."
         )
     )
-    parser.add_argument("--s1_h5ad", "-h1", required=True, help="S1 h5ad 路径（含 obsm['spatial']）")
-    parser.add_argument("--s2_h5ad", "-h2", required=True, help="S2 h5ad 路径（含 obsm['spatial']）")
-    parser.add_argument("--out_h5ad", "-o", required=True, help="输出 h5ad 路径")
-    parser.add_argument("--map_csv", "-m", default=None, help="中间映射表 CSV 输出路径（可选）")
-    parser.add_argument("--id_col", default="id", help="obs 中用作 id 的列名（若不存在则使用 obs_names）")
-    parser.add_argument("--cluster_col", default="cluster", help="从低分辨率 h5ad 中拷贝 cluster 的列名")
+    parser.add_argument("--s1_h5ad", "-h1", required=True, help="Path to the S1 h5ad file (must contain obsm['spatial'])")
+    parser.add_argument("--s2_h5ad", "-h2", required=True, help="Path to the S2 h5ad file (must contain obsm['spatial'])")
+    parser.add_argument("--out_h5ad", "-o", required=True, help="Output h5ad path")
+    parser.add_argument("--map_csv", "-m", default=None, help="Optional output path for the intermediate mapping CSV")
+    parser.add_argument("--id_col", default="id", help="obs column to use as the ID; obs_names are used if the column is missing")
+    parser.add_argument("--cluster_col", default="cluster", help="Name of the cluster column to copy from the low-resolution h5ad")
 
     parser.add_argument(
         "--s2_cluster_col",
         nargs="+",
         default=["Manual_annotation"],
         help=(
-            "从高分辨率切片（high-res）拷贝到新h5ad的obs列名，可写多个。"
-            "例如: --s2_cluster_col cluster barcode_S2"
+            "obs column names to copy from the high-resolution slice into the new h5ad. Multiple values are allowed. "
+            "Example: --s2_cluster_col cluster barcode_S2"
         ),
     )
-    parser.add_argument("--no_scale", action="store_true", help="关闭 1/k 缩放（不做表达量密度归一化）")
+    parser.add_argument("--no_scale", action="store_true", help="Disable 1/k scaling (skip expression-density normalization)")
     args = parser.parse_args()
 
     spomialign_reassignment(
