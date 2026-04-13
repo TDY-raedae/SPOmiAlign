@@ -1,4 +1,4 @@
-import os
+﻿import os
 import numpy as np
 import pandas as pd
 import scanpy as sc
@@ -106,7 +106,7 @@ def compute_nn_mapping_from_h5ads(
         nn_low = nn_s2
         adata_low, adata_high = adata_s2, adata_s1
 
-    print(f"\nAutomatically determined: {low_res_name} = low resolution，{high_res_name} = high resolution")
+    print(f"\nAutomatically determined: {low_res_name} = low resolution, {high_res_name} = high resolution")
 
     d_ref_max = float(np.max(nn_low)) if nn_low.size > 0 else 0.0
     print(f"Maximum internal nearest-neighbor distance in the low-resolution slice, d_ref_max = {d_ref_max:.4f}")
@@ -328,7 +328,7 @@ def build_reassigned_h5ad_from_mapping(
         os.makedirs(out_dir, exist_ok=True)
     adata_new.write_h5ad(out_h5ad, compression="gzip")
     print(f"\n[OK] New h5ad saved: {out_h5ad}")
-    print(f"   Shape: {adata_new.n_obs} × {adata_new.n_vars}")
+    print(f"   Shape: {adata_new.n_obs} x {adata_new.n_vars}")
     print("   obs columns:", list(adata_new.obs.columns))
     print("   obsm keys:", list(adata_new.obsm.keys()))
     if "cluster" in adata_new.obs:
@@ -433,3 +433,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

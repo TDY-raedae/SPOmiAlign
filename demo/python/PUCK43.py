@@ -1,192 +1,232 @@
-import os 
-import cv2 
-import sys 
+﻿# Auto-generated from demo/notebook/PUCK43.ipynb
+
+# # SPOmiAlign Demo: Image to Image Section Alignment
+#
+# This notebook follows a fixed workflow:
+# 1. Input unaligned slices (paired images)
+# 2. Imaging (generation of spatial structural images, SSI)
+# 3. Sections matching and warpping
+# 4. Reassignment
+# 5. Output aligned slices
+#
+
+# ## 1. Input unaligned slices (paired images)
+
+import os
+import sys
 from pathlib import Path
+
+import cv2
+import matplotlib.pyplot as plt
 import numpy as np
-parent_dir = str(Path(__file__).resolve().parent.parent.parent)
-sys.path.append("../../SPOmiAlign")
+
+
+
+NOTEBOOK_DIR = Path().resolve()
+DEMO_DIR = NOTEBOOK_DIR.parent
+PROJECT_ROOT = DEMO_DIR.parent
+sys.path.append(str(PROJECT_ROOT / "SPOmiAlign"))
+
 from roma import align_and_process_images
-from data_preprocessing import rasterize_h5ad_to_image
+from data_preprocessing import scatter_h5ad_to_image
 
-DATA_DIR="../../SPOmiAlign_Repro"
-h5ad_path=os.path.join(DATA_DIR,"data_preprocessing","Puck_Num_43.h5ad")
-target_image_path=os.path.join(DATA_DIR,"output_reference","CCF_100048576_273.png")
-niss_image_path=os.path.join(DATA_DIR,"output_niss","niss_40.png")
-SAVE_DIR="../../output"
-SAVE_PATH=os.path.join(SAVE_DIR,"h5ad_2_img","PUCK43")
-os.makedirs(SAVE_PATH, exist_ok=True)
+DATA_DIR = Path(
+    os.environ.get("SPOMIALIGN_DEMO_DATA_DIR", DEMO_DIR / "SPOmiAlign_Repro")
+).expanduser()
+SAVE_DIR = Path(
+    os.environ.get("SPOMIALIGN_DEMO_SAVE_DIR", DEMO_DIR / "output")
+).expanduser()
+SAVE_PATH = SAVE_DIR / "h5ad_2_img/PUCK43"
+SAVE_PATH.mkdir(parents=True, exist_ok=True)
 
-os.makedirs(SAVE_PATH, exist_ok=True)
-print(f"目录已准备就绪: {os.path.abspath(SAVE_PATH)}")
+print(f"Data directory: {DATA_DIR}")
+print(f"Output directory: {SAVE_PATH}")
+h5ad_path = DATA_DIR / "data_preprocessing" / "Puck_Num_43.h5ad"
+target_image_path = DATA_DIR / "output_reference" / "CCF_100048576_273.png"
+niss_image_path = DATA_DIR / "output_niss" / "niss_40.png"
 
-# =========================
-# 文件存在性验证
-# =========================
-files_to_check = {
-    "H5AD 数据": h5ad_path,
-    "目标参考图像": target_image_path
-}
+assert h5ad_path.exists(), f"H5AD file not found: {h5ad_path}"
+assert target_image_path.exists(), f"CCF target image not found: {target_image_path}"
+assert niss_image_path.exists(), f"Nissl image not found: {niss_image_path}"
 
-print("\n🔍 正在检查输入文件...")
-missing_files = []
+target_img_for_shape = cv2.imread(str(target_image_path), cv2.IMREAD_COLOR)
+niss_img_for_shape = cv2.imread(str(niss_image_path), cv2.IMREAD_COLOR)
+assert target_img_for_shape is not None, f"Failed to read CCF target image: {target_image_path}"
+assert niss_img_for_shape is not None, f"Failed to read Nissl image: {niss_image_path}"
+target_h, target_w = target_img_for_shape.shape[:2]
+niss_h, niss_w = niss_img_for_shape.shape[:2]
 
-for name, path in files_to_check.items():
-    if os.path.exists(path):
-        # 进一步检查文件是否为空（可选）
-        file_size = os.path.getsize(path) / (1024 * 1024)  # MB
-        print(f"✅ {name} 已找到: {os.path.basename(path)} ({file_size:.2f} MB)")
-    else:
-        print(f"❌ {name} 不存在: {os.path.abspath(path)}")
-        missing_files.append(path)
+print(f"Input H5AD: {h5ad_path}")
+print(f"Nissl image: {niss_image_path}")
+print(f"CCF target image: {target_image_path}")
+print(f"Nissl size: {niss_w} x {niss_h}")
+print(f"CCF size: {target_w} x {target_h}")
 
-if missing_files:
-    print("\n程序终止：请确保所有输入文件路径正确。")
-    sys.exit(1) # 强行退出，防止后续报错
-else:
-    print("🚀 所有文件准备就绪，准备开始处理。\n" + "-"*30)
-print("🚀 步骤一 H5ad转化成图像。\n" + "-"*30)
-Gen_img_path=os.path.join(SAVE_PATH,"Gen_img_PUCK43.png")
-_,origin=rasterize_h5ad_to_image(
-    input_h5ad=h5ad_path,
-    output_png=Gen_img_path,
+
+# ## 2. Imaging (generation of spatial structural images, SSI)
+
+# %matplotlib inline
+Gen_img_path = SAVE_PATH / "Gen_img_PUCK43_scatter.png"
+
+# Keep rasterize-style coordinate handling for the initial SSI.
+_, origin = scatter_h5ad_to_image(
+    input_h5ad=str(h5ad_path),
+    output_png=str(Gen_img_path),
     x_obs_col="Raw_Slideseq_X",
     y_obs_col="Raw_Slideseq_Y",
-    # intensity_mode="obs_col",
+    intensity_mode="obs_col",
     intensity_obs_col="nFeature_Spatial",
-    intensity_log_transform=True,   # nFeature 计数建议 log1p
-    threshold_percentile=80,        # 80 分位筛点
+    intensity_log_transform=True,
+    threshold_percentile=80,
     background="black",
     point_shape="circle",
     radius=5,
-    enhance=True,                  # 你前面那套增强
     rotate=90,
     scale=1.0,
+    display_long_side=0,
+    padding=0,
+    dpi=200,
+    marker_alpha=1.0,
+    gray_min=0.55,
+    gray_max=1.0,
+    invert_intensity=False,
+    enhance=True,
 )
 
-print("🚀 步骤二 将h5ad图像和niss图像对齐。\n" + "-"*30)
-save_path_alignment_with_niss=os.path.join(SAVE_PATH,"alignment_with_niss")
-transformed_with_niss_h5ad_path=os.path.join(save_path_alignment_with_niss,"transformed.h5ad")
-transformed_with_niss_h5ad_img_path=os.path.join(save_path_alignment_with_niss,"transformed_h5ad.png")
-img2_warpped_with_niss=os.path.join(save_path_alignment_with_niss,"aligned_source_img2.png")
+plt.figure(figsize=(8, 8))
+plt.imshow(cv2.cvtColor(cv2.imread(str(Gen_img_path)), cv2.COLOR_BGR2RGB))
+plt.title("PUCK43 SSI")
+plt.axis("off")
+plt.show()
+
+
+# ## 3. Sections matching and warpping
+
+save_path_alignment_with_niss = SAVE_PATH / "alignment_with_niss"
+save_path_alignment_with_niss.mkdir(parents=True, exist_ok=True)
+transformed_with_niss_h5ad_path = save_path_alignment_with_niss / "transformed.h5ad"
+transformed_with_niss_h5ad_img_path = save_path_alignment_with_niss / "transformed_h5ad_scatter.png"
+
 align_and_process_images(
-    img1_path=niss_image_path, 
-    img2_path=Gen_img_path, 
-    h5ad_path=h5ad_path,  
-    method='affine+bspline', 
-    output_dir=save_path_alignment_with_niss,     
-    x_obs_col="Raw_Slideseq_X",            
+    img1_path=str(niss_image_path),
+    img2_path=str(Gen_img_path),
+    h5ad_path=str(h5ad_path),
+    method="affine+bspline",
+    output_dir=str(save_path_alignment_with_niss),
+    x_obs_col="Raw_Slideseq_X",
     y_obs_col="Raw_Slideseq_Y",
-    # === 新增参数 ===
     rotate=90.0,
     scale=1.0,
-    origin=origin
+    origin=origin,
+    auto_upscale_reference=False,
 )
 
-
-rasterize_h5ad_to_image(
-    input_h5ad=transformed_with_niss_h5ad_path,
-    output_png=transformed_with_niss_h5ad_img_path,
+# Render transformed PUCK43 directly in the Nissl canvas.
+scatter_h5ad_to_image(
+    input_h5ad=str(transformed_with_niss_h5ad_path),
+    output_png=str(transformed_with_niss_h5ad_img_path),
     x_obs_col="Raw_Slideseq_X",
     y_obs_col="Raw_Slideseq_Y",
-    # intensity_mode="obs_col",
+    intensity_mode="obs_col",
     intensity_obs_col="nFeature_Spatial",
-    intensity_log_transform=True,   # nFeature 计数建议 log1p
-    threshold_percentile=80,        # 80 分位筛点
+    intensity_log_transform=True,
+    threshold_percentile=80,
     background="black",
     point_shape="circle",
-    radius=2,
-    enhance=True,                  # 你前面那套增强
+    radius=5,
     rotate=0.0,
     scale=1.0,
-
+    display_long_side=0,
+    padding=0,
+    canvas_size=(niss_w, niss_h),
+    dpi=120,
+    marker_alpha=1.0,
+    gray_min=0.55,
+    gray_max=1.0,
+    invert_intensity=False,
+    enhance=True,
 )
 
-print("🚀 步骤三 将h5ad图像和ccf(target)图像对齐。\n" + "-"*30)
-save_path_alignment_with_ccf=os.path.join(SAVE_PATH,"alignment_with_ccf")
-transformed_with_ccf_h5ad_path=os.path.join(save_path_alignment_with_ccf,"transformed.h5ad")
-transformed_with_ccf_h5ad_img_path=os.path.join(save_path_alignment_with_ccf,"transformed_h5ad.png")
+save_path_alignment_with_ccf = SAVE_PATH / "alignment_with_ccf"
+save_path_alignment_with_ccf.mkdir(parents=True, exist_ok=True)
+transformed_with_ccf_h5ad_path = save_path_alignment_with_ccf / "transformed.h5ad"
+transformed_with_ccf_h5ad_img_path = save_path_alignment_with_ccf / "transformed_h5ad_scatter.png"
+
 align_and_process_images(
-    img1_path=target_image_path, 
-    img2_path=niss_image_path, 
-    h5ad_path=transformed_with_niss_h5ad_path,  
-    method='affine+bspline', 
-    output_dir=save_path_alignment_with_ccf,     
-    x_obs_col="Raw_Slideseq_X",            
-    y_obs_col="Raw_Slideseq_Y",
-    # === 新增参数 ===
-    rotate=0.0,
-    scale=1.0,
-    origin=origin
-)
-
-
-rasterize_h5ad_to_image(
-    input_h5ad=transformed_with_ccf_h5ad_path,
-    output_png=transformed_with_ccf_h5ad_img_path,
+    img1_path=str(target_image_path),
+    img2_path=str(niss_image_path),
+    h5ad_path=str(transformed_with_niss_h5ad_path),
+    method="affine+bspline",
+    output_dir=str(save_path_alignment_with_ccf),
     x_obs_col="Raw_Slideseq_X",
     y_obs_col="Raw_Slideseq_Y",
-    # intensity_mode="obs_col",
-    intensity_obs_col="nFeature_Spatial",
-    intensity_log_transform=True,   # nFeature 计数建议 log1p
-    threshold_percentile=80,        # 80 分位筛点
-    background="black",
-    point_shape="circle",
-    radius=2,
-    enhance=True,                  # 你前面那套增强
     rotate=0.0,
     scale=1.0,
+    origin=origin,
+    auto_upscale_reference=False,
+)
 
+# Render transformed PUCK43 directly in the CCF canvas.
+scatter_h5ad_to_image(
+    input_h5ad=str(transformed_with_ccf_h5ad_path),
+    output_png=str(transformed_with_ccf_h5ad_img_path),
+    x_obs_col="Raw_Slideseq_X",
+    y_obs_col="Raw_Slideseq_Y",
+    intensity_mode="obs_col",
+    intensity_obs_col="nFeature_Spatial",
+    intensity_log_transform=True,
+    threshold_percentile=80,
+    background="black",
+    point_shape="circle",
+    radius=5,
+    rotate=0.0,
+    scale=1.0,
+    display_long_side=0,
+    padding=0,
+    canvas_size=(target_w, target_h),
+    dpi=200,
+    marker_alpha=1.0,
+    gray_min=0.55,
+    gray_max=1.0,
+    invert_intensity=False,
+    enhance=True,
 )
 
 
-# =========================
-# 步骤四：读取结果，并与彩色 Target Image 叠加预览
-# =========================
-print("\n🚀 步骤四 正在生成彩色叠加对比图...")
-# 1. 读取原图（不带 GRAYSCALE 参数，默认读取 BGR 3通道）
-target_img=cv2.imread(target_image_path)
-# 对齐后的点位图依然读取为灰度，作为掩膜(Mask)使用
-aligned_h5ad_img = cv2.imread(transformed_with_ccf_h5ad_img_path, cv2.IMREAD_GRAYSCALE)
+# ## 4. Reassignment
 
-if target_img is None or aligned_h5ad_img is None:
-    print("❌ 图像读取失败，请检查路径。")
-else:
-    # 获取尺寸
-    t_h, t_w = target_img.shape[:2]
-    a_h, a_w = aligned_h5ad_img.shape[:2]
-    print(f"📏 Target 尺寸: {t_w}x{t_h} (彩色) | Aligned H5AD 尺寸: {a_w}x{a_h}")
+# No reassignment step is used in this PUCK43 image-alignment demo.
 
-    # 2. 创建匹配 Target 尺寸的掩膜画布
-    # 确保即使 H5AD 图像尺寸小，也能准确对齐到左上角
-    h5ad_mask_full = np.zeros((t_h, t_w), dtype=np.uint8)
-    h_limit = min(t_h, a_h)
-    w_limit = min(t_w, a_w)
-    h5ad_mask_full[:h_limit, :w_limit] = aligned_h5ad_img[:h_limit, :w_limit]
+# ## 5. Output aligned slices
 
-    # 3. 叠加预览：在原色图上涂色
-    # 我们创建一个副本，不破坏原始 target_img
-    overlay_img = target_img.copy()
+target_img = cv2.imread(str(target_image_path))
+aligned_gray = cv2.imread(str(transformed_with_ccf_h5ad_img_path), cv2.IMREAD_GRAYSCALE)
+assert target_img is not None, f"Failed to read target image: {target_image_path}"
+assert aligned_gray is not None, f"Failed to read transformed SSI image: {transformed_with_ccf_h5ad_img_path}"
 
-    # 设定一个阈值，h5ad_mask_full 中大于此值的像素被视为“有点”
-    # 如果你 background="black"，则点是亮的（值大）
-    point_threshold = 50 
-    mask = h5ad_mask_full > point_threshold
+h5ad_mask_full = np.zeros(target_img.shape[:2], dtype=np.uint8)
+h_limit = min(h5ad_mask_full.shape[0], aligned_gray.shape[0])
+w_limit = min(h5ad_mask_full.shape[1], aligned_gray.shape[1])
+h5ad_mask_full[:h_limit, :w_limit] = aligned_gray[:h_limit, :w_limit]
 
-    # 将有像素点的地方设为亮绿色 [B, G, R] -> [0, 255, 0]
-    # 如果你想用红色，就改用 [0, 0, 255]
-    overlay_img[mask] = [0, 255, 0] 
+aligned_bgr = cv2.cvtColor(h5ad_mask_full, cv2.COLOR_GRAY2BGR)
+overlay_img = cv2.addWeighted(target_img, 0.5, aligned_bgr, 0.5, 0)
+overlay_save_path = save_path_alignment_with_ccf / "color_alignment_overlay.png"
+cv2.imwrite(str(overlay_save_path), overlay_img)
 
-    # 4. 进阶：半透明叠加（可选，如果你想同时看到点下面的原图纹理）
-    # alpha 是原图权重，beta 是点位图权重
-    # alpha_img = cv2.addWeighted(target_img, 0.7, overlay_img, 0.3, 0)
+fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+axes[0].imshow(cv2.cvtColor(cv2.imread(str(Gen_img_path)), cv2.COLOR_BGR2RGB))
+axes[0].set_title("Generated SSI")
+axes[0].axis("off")
+axes[1].imshow(cv2.cvtColor(target_img, cv2.COLOR_BGR2RGB))
+axes[1].set_title("CCF target")
+axes[1].axis("off")
+axes[2].imshow(cv2.cvtColor(overlay_img, cv2.COLOR_BGR2RGB))
+axes[2].set_title("Aligned PUCK43 slice")
+axes[2].axis("off")
+plt.show()
 
-    # 5. 保存结果
-    overlay_save_path = os.path.join(save_path_alignment_with_ccf, "color_alignment_overlay.png")
-    cv2.imwrite(overlay_save_path, overlay_img)
-    
-    # 同时保存一份原图和叠加图的左右对比
-    comparison = np.hstack((target_img, overlay_img))
-    cv2.imwrite(os.path.join(save_path_alignment_with_ccf, "color_side_by_side.png"), comparison)
+print(f"Aligned H5AD after Nissl and CCF matching: {transformed_with_ccf_h5ad_path}")
+print(f"Overlay image: {overlay_save_path}")
 
-    print(f"✅ 彩色叠加图已保存：{overlay_save_path}")
-print("\n✨✨✨ 所有流程执行完毕！ ✨✨✨")
+

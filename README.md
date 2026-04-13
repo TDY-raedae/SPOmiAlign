@@ -7,6 +7,10 @@ Corresponding manuscript title:
 
 ![SPOmiAlign pipeline](docs/_static/pipeline.png)
 
+![SPOmiAlign method comparison](images/Rage_compare.png)
+
+The comparison figure is placed directly below Fig. 1 to summarize where `SPOmiAlign` sits relative to representative spatial alignment methods. It highlights the method's support for cross-modality registration, subcellular-resolution use cases, non-rigid alignment, fully automated execution, and partial-alignment scenarios. Together with the pipeline overview above, this table gives a quick visual summary of both the workflow and the practical scope of the framework.
+
 ## Directory structure
 
 ```text
@@ -23,13 +27,14 @@ Corresponding manuscript title:
 
 ## Workflow overview
 
-`SPOmiAlign` supports h5ad-to-image, image-to-image and h5ad-to-h5ad alignment workflows:
+`SPOmiAlign` supports image-to-image and h5ad-to-h5ad alignment workflows:
 
 1. Convert spatial omics coordinates or intensity-aware spots into rasterized images.
 2. Use the RoMa-based feature matching pipeline to estimate cross-modality alignment.
 3. Warp source coordinates or aligned h5ad objects into the reference coordinate system.
 4. Reassign source expression profiles onto the aligned spatial layout for downstream analysis.
 
+The overview figure used in this README is generated from [`images/figure_1.pdf`](images/figure_1.pdf).
 
 ## Installation
 

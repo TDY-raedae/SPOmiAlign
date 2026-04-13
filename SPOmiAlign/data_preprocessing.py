@@ -2,10 +2,16 @@
 # -*- coding: utf-8 -*-
 
 import os
+import matplotlib
 import numpy as np
 import scanpy as sc
-from PIL import Image
 import cv2
+from PIL import Image
+from scipy.spatial import cKDTree
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
 
 
 # =========================
@@ -227,6 +233,158 @@ def _only_shift_nonnegative(
     return x, y
 
 
+def _load_render_coordinates(
+    adata,
+    *,
+    spatial_key: str = "spatial",
+    x_obs_col: str | None = None,
+    y_obs_col: str | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Load x/y coordinates from obs columns or the first two columns of obsm[spatial_key]."""
+    if x_obs_col is not None and y_obs_col is not None:
+        x = np.asarray(adata.obs[x_obs_col], dtype=np.float64)
+        y = np.asarray(adata.obs[y_obs_col], dtype=np.float64)
+        return x, y
+
+    if spatial_key not in adata.obsm:
+        raise KeyError(
+            f"obsm['{spatial_key}'] does not exist; please provide x_obs_col/y_obs_col "
+            "to specify coordinate columns"
+        )
+
+    xy = np.asarray(adata.obsm[spatial_key], dtype=np.float64)
+    if xy.ndim != 2 or xy.shape[1] < 2:
+        raise ValueError(f"obsm['{spatial_key}'] must have shape (N,2+); got {xy.shape}")
+    return xy[:, 0], xy[:, 1]
+
+
+def _load_render_intensity(
+    adata,
+    *,
+    intensity_mode: str = "X_sum",
+    intensity_obs_col: str | None = None,
+) -> np.ndarray:
+    """Load one scalar intensity value per observation."""
+    if intensity_mode == "X_sum":
+        try:
+            intensity_raw = np.array(adata.X.sum(axis=1)).reshape(-1)
+        except Exception:
+            intensity_raw = np.asarray(adata.X.sum(axis=1)).ravel()
+        return np.nan_to_num(intensity_raw.astype(np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+
+    if intensity_mode == "obs_col":
+        if not intensity_obs_col:
+            raise ValueError("intensity_obs_col must be provided when intensity_mode='obs_col'")
+        return np.asarray(adata.obs[intensity_obs_col], dtype=np.float64)
+
+    raise ValueError("intensity_mode must be 'X_sum' or 'obs_col'")
+
+
+def _spatial_inlier_mask(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    enabled: bool = True,
+    outlier_factor: float = 5.0,
+) -> np.ndarray:
+    """
+    Remove a small number of isolated coordinate outliers using nearest-neighbor distances.
+    This is intended for display use only and falls back to keeping all points when the
+    detected outlier set is too large or unstable.
+    """
+    n_points = int(x.shape[0])
+    keep = np.ones(n_points, dtype=bool)
+    if (not enabled) or n_points < 4:
+        return keep
+
+    xy = np.column_stack([x, y]).astype(np.float64)
+    tree = cKDTree(xy)
+    distances, _ = tree.query(xy, k=2)
+    nn_dist = np.asarray(distances[:, 1], dtype=np.float64)
+    finite = np.isfinite(nn_dist)
+    if not np.any(finite):
+        return keep
+
+    baseline = float(np.nanmedian(nn_dist[finite]))
+    q1 = float(np.nanpercentile(nn_dist[finite], 25))
+    q3 = float(np.nanpercentile(nn_dist[finite], 75))
+    iqr = max(q3 - q1, 0.0)
+    threshold = max(baseline * float(outlier_factor), q3 + 3.0 * iqr)
+    if not np.isfinite(threshold) or threshold <= 0:
+        return keep
+
+    keep = nn_dist <= threshold
+    removed = int((~keep).sum())
+    if removed <= 0 or removed > max(10, int(0.02 * n_points)):
+        return np.ones(n_points, dtype=bool)
+    return keep
+
+
+def _scale_points_for_display(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    display_long_side: int = 2200,
+    padding: int = 32,
+) -> tuple[np.ndarray, np.ndarray, int, int, float]:
+    """
+    Shift coordinates to start at zero and uniformly scale them so the long side fits a
+    display-friendly canvas.
+    """
+    x = np.asarray(x, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    if x.size == 0:
+        raise ValueError("Cannot scale an empty point set for display.")
+
+    x = x - float(np.nanmin(x))
+    y = y - float(np.nanmin(y))
+
+    long_side = max(float(np.nanmax(x)), float(np.nanmax(y)), 1.0)
+    usable_long_side = max(float(display_long_side - 2 * max(int(padding), 0) - 1), 1.0)
+    fit_scale = usable_long_side / long_side
+    x = x * fit_scale
+    y = y * fit_scale
+
+    if padding > 0:
+        x = x + float(padding)
+        y = y + float(padding)
+
+    width = int(np.ceil(np.nanmax(x))) + max(int(padding), 0) + 1
+    height = int(np.ceil(np.nanmax(y))) + max(int(padding), 0) + 1
+    return x, y, width, height, fit_scale
+
+
+def _compute_grayscale_colors(
+    intensity: np.ndarray,
+    *,
+    background: str = "white",
+    gray_min: float = 0.35,
+    gray_max: float = 0.88,
+    invert_intensity: bool = False,
+) -> np.ndarray:
+    """Map normalized intensity values to grayscale RGB triples for scatter plotting."""
+    values = np.asarray(intensity, dtype=np.float64)
+    values = np.clip(values, 0.0, 1.0)
+    if invert_intensity:
+        values = 1.0 - values
+
+    lo = float(np.clip(gray_min, 0.0, 1.0))
+    hi = float(np.clip(gray_max, 0.0, 1.0))
+    if hi < lo:
+        lo, hi = hi, lo
+
+    bg = background.lower()
+    if bg not in ("white", "black"):
+        raise ValueError("background must be 'white' or 'black'")
+
+    if bg == "white":
+        tones = lo + (hi - lo) * values
+    else:
+        tones = lo + (hi - lo) * values
+    tones = np.clip(tones, 0.0, 1.0)
+    return np.stack([tones, tones, tones], axis=1)
+
+
 # =========================
 # Core: h5ad -> pixel-level rasterized grayscale image
 # with optional enhancement
@@ -321,12 +479,6 @@ def rasterize_h5ad_to_image(
         clip_low=1.0,
         clip_high=99.0,
     )
-
-    # Optional: keep these values in adata.obs for debugging or downstream use,
-    # even though they are not written back to h5ad here
-    adata.obs["render_intensity_raw"] = intensity_raw
-    adata.obs["render_intensity_norm"] = intensity_norm
-    adata.obs["render_keep"] = keep_mask.astype(np.int8)
 
     # ===== Filter valid points (valid coordinates/intensity and keep=True) =====
     valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(intensity_norm) & keep_mask
@@ -442,6 +594,201 @@ def rasterize_h5ad_to_image(
 
     return output_png,origin
 
+
+def scatter_h5ad_to_image(
+    *,
+    input_h5ad: str,
+    output_png: str,
+
+    # Coordinate source
+    spatial_key: str = "spatial",
+    x_obs_col: str | None = None,
+    y_obs_col: str | None = None,
+
+    # Intensity source
+    intensity_mode: str = "X_sum",       # "X_sum" | "obs_col"
+    intensity_obs_col: str | None = None,
+
+    # Shared intensity preprocessing
+    intensity_log_transform: bool = False,
+    threshold_percentile: float | None = None,
+
+    # Scatter appearance
+    background: str = "white",           # "white" | "black"
+    point_shape: str = "circle",         # "circle" | "square"
+    radius: int = 5,
+    marker_size: float | None = None,    # Matplotlib scatter size in pt^2
+    marker_alpha: float = 0.9,
+    gray_min: float = 0.35,
+    gray_max: float = 0.88,
+    invert_intensity: bool = False,
+    enhance: bool = False,
+    clahe_clip: float = 4.0,
+    clahe_grid: tuple[int, int] = (8, 8),
+    gamma: float = 0.8,
+    unsharp_ksize: tuple[int, int] = (5, 5),
+    unsharp_sigma: float = 1.0,
+    unsharp_amount: float = 1.5,
+
+    # Optional user-specified rotate/scale settings
+    rotate: float = 0.0,
+    scale: float = 1.0,
+    rotate_origin: str = "data",
+
+    # Display scaling control. If <=0, keep native coordinate extent.
+    display_long_side: int = 2200,
+    padding: int = 32,
+    dpi: int = 200,
+
+    # Kept for backward compatibility; coordinate processing now follows
+    # rasterize_h5ad_to_image and does not apply display-only outlier filtering.
+    filter_spatial_outliers: bool = True,
+    spatial_outlier_factor: float = 5.0,
+    canvas_size: tuple[int, int] | None = None,
+):
+    """
+    Render one h5ad file as an anti-aliased grayscale scatter plot. Unlike
+    rasterize_h5ad_to_image, this keeps each observation as a display marker instead of
+    expanding it into a pixel kernel before writing to an image array.
+
+    Coordinate handling follows rasterize_h5ad_to_image, plus optional display scaling:
+      - read coordinates
+      - optional rotate/scale
+      - optional fit-to-display-long-side scaling
+      - round to integer pixel coordinates
+      - infer the canvas directly from the transformed coordinates unless canvas_size is provided
+    """
+    os.makedirs(os.path.dirname(output_png), exist_ok=True)
+
+    adata = sc.read_h5ad(input_h5ad)
+    x, y = _load_render_coordinates(
+        adata,
+        spatial_key=spatial_key,
+        x_obs_col=x_obs_col,
+        y_obs_col=y_obs_col,
+    )
+    intensity_raw = _load_render_intensity(
+        adata,
+        intensity_mode=intensity_mode,
+        intensity_obs_col=intensity_obs_col,
+    )
+
+    intensity_norm, keep_mask = _prepare_intensity(
+        intensity_raw,
+        intensity_log_transform=bool(intensity_log_transform),
+        threshold_percentile=threshold_percentile,
+        clip_low=1.0,
+        clip_high=99.0,
+    )
+
+    valid = np.isfinite(x) & np.isfinite(y) & np.isfinite(intensity_norm) & keep_mask
+    x = x[valid]
+    y = y[valid]
+    v = intensity_norm[valid]
+    if x.size == 0:
+        raise ValueError(
+            "The number of valid points is 0. Please check the coordinate/intensity columns, "
+            "or lower threshold_percentile."
+        )
+
+    origin = None
+    if (abs(float(rotate)) > 1e-12) or (abs(float(scale) - 1.0) > 1e-12):
+        x, y, origin = _apply_rotate_scale_clockwise(
+            x,
+            y,
+            rotate_deg=float(rotate),
+            scale=float(scale),
+            origin_mode=str(rotate_origin),
+        )
+
+    if int(display_long_side) > 0 and canvas_size is None:
+        x_draw, y_draw, width, height, _ = _scale_points_for_display(
+            x,
+            y,
+            display_long_side=int(display_long_side),
+            padding=int(padding),
+        )
+        x_pix = np.rint(x_draw).astype(np.int32)
+        y_pix = np.rint(y_draw).astype(np.int32)
+    else:
+        x_pix = np.rint(x).astype(np.int32)
+        y_pix = np.rint(y).astype(np.int32)
+        if canvas_size is not None:
+            width, height = canvas_size
+        else:
+            width = int(x_pix.max()) + 1
+            height = int(y_pix.max()) + 1
+
+    if width <= 0 or height <= 0:
+        raise ValueError(f"Invalid canvas size: W={width}, H={height}")
+
+    colors = _compute_grayscale_colors(
+        v,
+        background=background,
+        gray_min=gray_min,
+        gray_max=gray_max,
+        invert_intensity=bool(invert_intensity),
+    )
+
+    bg = background.lower()
+    marker_lookup = {"circle": "o", "square": "s"}
+    marker = marker_lookup.get(str(point_shape).lower(), "o")
+    facecolor = "white" if bg == "white" else "black"
+    if marker_size is None:
+        diameter_px = float(max(1, 2 * int(radius) + 1))
+        diameter_pt = diameter_px * 72.0 / float(dpi)
+        if marker == "s":
+            marker_size = float(diameter_pt ** 2)
+        else:
+            radius_pt = 0.5 * diameter_pt
+            marker_size = float(np.pi * radius_pt ** 2)
+
+    fig = plt.figure(
+        figsize=(width / float(dpi), height / float(dpi)),
+        dpi=int(dpi),
+        facecolor=facecolor,
+    )
+    ax = fig.add_axes([0, 0, 1, 1], facecolor=facecolor)
+    ax.scatter(
+        x_pix,
+        y_pix,
+        s=float(marker_size),
+        c=colors,
+        marker=marker,
+        linewidths=0.0,
+        alpha=float(marker_alpha),
+        antialiaseds=False,
+    )
+    ax.set_xlim(0, width)
+    ax.set_ylim(height, 0)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    fig.savefig(output_png, dpi=int(dpi), facecolor=facecolor, edgecolor="none")
+    plt.close(fig)
+
+    if enhance:
+        img_gray = cv2.imread(output_png, cv2.IMREAD_GRAYSCALE)
+        if img_gray is None:
+            raise FileNotFoundError(f"Failed to read scatter image for enhancement: {output_png}")
+        img_gray = enhance_gray_uint8(
+            img_gray,
+            clahe_clip=clahe_clip,
+            clahe_grid=clahe_grid,
+            gamma=gamma,
+            unsharp_ksize=unsharp_ksize,
+            unsharp_sigma=unsharp_sigma,
+            unsharp_amount=unsharp_amount,
+        )
+        Image.fromarray(img_gray, mode="L").save(output_png)
+
+    print(
+        f"[OK] Scatter PNG saved: {output_png} "
+        f"({width}x{height}, background={background}, shape={point_shape}, "
+        f"points={x_pix.size})"
+    )
+
+    return output_png, origin
+
 # =========================
 # Usage examples
 # =========================
@@ -533,4 +880,22 @@ if __name__ == "__main__":
         enhance=False,
         rotate=60.0,
         scale=0.6,
+    )
+
+    scatter_h5ad_to_image(
+        input_h5ad="/mnt/A3/ivy/register_data/3omics/Cerebellum-MALDI-MSI.h5ad",
+        output_png="/mnt/A3/ivy/register_data/SPOmiAlign_Repro/output_image/sm_scatter.png",
+        background="white",
+        point_shape="circle",
+        radius=4,
+        threshold_percentile=None,
+        intensity_log_transform=False,
+        rotate=60.0,
+        scale=0.6,
+        display_long_side=2200,
+        padding=32,
+        dpi=200,
+        marker_alpha=0.9,
+        gray_min=0.35,
+        gray_max=0.88,
     )
