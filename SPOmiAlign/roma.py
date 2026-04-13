@@ -133,7 +133,12 @@ def estimate_rigid_transform_svd(src_pts, dst_pts):
     M = np.hstack([R, t.reshape(2, 1)])
     return M
 
-def warp_image_bspline(moving_img_np: np.ndarray, tx: sitk.Transform, out_size_xy=None):
+def warp_image_bspline(
+    moving_img_np: np.ndarray,
+    tx: sitk.Transform,
+    out_size_xy=None,
+    default_pixel_value: float = 0.0,
+):
     """SimpleITK B-spline image transformation"""
     if moving_img_np.ndim == 2:
         moving = sitk.GetImageFromArray(moving_img_np.astype(np.float32))
@@ -150,7 +155,7 @@ def warp_image_bspline(moving_img_np: np.ndarray, tx: sitk.Transform, out_size_x
     resampler.SetReferenceImage(ref)
     resampler.SetTransform(tx)
     resampler.SetInterpolator(sitk.sitkLinear)
-    resampler.SetDefaultPixelValue(0)
+    resampler.SetDefaultPixelValue(float(default_pixel_value))
     warped = resampler.Execute(moving)
     return sitk.GetArrayFromImage(warped)
 
@@ -262,7 +267,10 @@ def align_and_process_images(
     rotate: float = 0.0,
     scale: float = 1.0,
     rotate_origin: str = "data",
-    origin=None
+    origin=None,
+    auto_upscale_reference: bool = True,
+    source_render_meta: dict | None = None,
+    target_render_meta: dict | None = None,
 ):
     os.makedirs(output_dir, exist_ok=True)
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -314,6 +322,106 @@ def align_and_process_images(
 
         # 5. Convert back to (N, 2) float32
         return out.astype(np.float32)
+
+    def apply_render_forward(pts: np.ndarray, meta: dict | None) -> np.ndarray:
+        """Map original h5ad coordinates to rendered image pixel coordinates."""
+        if meta is None:
+            return pts
+
+        out = pts.astype(np.float64).copy()
+        if out.size == 0:
+            return out.astype(np.float32)
+
+        origin_arr = np.asarray(meta.get("rotation_origin", [0.0, 0.0]), dtype=np.float64)
+        rotate_deg = float(meta.get("rotate_deg", 0.0))
+        scale_val = float(meta.get("scale", 1.0))
+        if abs(rotate_deg) > 1e-12 or abs(scale_val - 1.0) > 1e-12:
+            th = np.deg2rad(-rotate_deg)
+            c, s = np.cos(th), np.sin(th)
+            A = scale_val * np.array([[c, s], [-s, c]], dtype=np.float64)
+            out = (out - origin_arr.reshape(1, 2)) @ A.T + origin_arr.reshape(1, 2)
+
+        if bool(meta.get("flip_horizontal", False)):
+            flip_axis_x = meta.get("flip_axis_x", None)
+            if flip_axis_x is None:
+                raise ValueError("render_meta is missing flip_axis_x while flip_horizontal=True")
+            out[:, 0] = float(flip_axis_x) - out[:, 0]
+
+        if bool(meta.get("use_display_scaling", False)):
+            min_x = float(meta.get("min_x", 0.0))
+            min_y = float(meta.get("min_y", 0.0))
+            fit_scale = float(meta.get("fit_scale", 1.0))
+            padding = float(meta.get("padding", 0.0))
+            out[:, 0] = (out[:, 0] - min_x) * fit_scale + padding
+            out[:, 1] = (out[:, 1] - min_y) * fit_scale + padding
+
+        return out.astype(np.float32)
+
+    def apply_render_inverse(pts: np.ndarray, meta: dict | None) -> np.ndarray:
+        """Map rendered image pixel coordinates back to original h5ad coordinates."""
+        if meta is None:
+            return pts
+
+        out = pts.astype(np.float64).copy()
+        if out.size == 0:
+            return out.astype(np.float32)
+
+        if bool(meta.get("use_display_scaling", False)):
+            min_x = float(meta.get("min_x", 0.0))
+            min_y = float(meta.get("min_y", 0.0))
+            fit_scale = float(meta.get("fit_scale", 1.0))
+            padding = float(meta.get("padding", 0.0))
+            fit_scale = fit_scale if abs(fit_scale) > 1e-12 else 1.0
+            out[:, 0] = (out[:, 0] - padding) / fit_scale + min_x
+            out[:, 1] = (out[:, 1] - padding) / fit_scale + min_y
+
+        if bool(meta.get("flip_horizontal", False)):
+            flip_axis_x = meta.get("flip_axis_x", None)
+            if flip_axis_x is None:
+                raise ValueError("render_meta is missing flip_axis_x while flip_horizontal=True")
+            out[:, 0] = float(flip_axis_x) - out[:, 0]
+
+        origin_arr = np.asarray(meta.get("rotation_origin", [0.0, 0.0]), dtype=np.float64)
+        rotate_deg = float(meta.get("rotate_deg", 0.0))
+        scale_val = float(meta.get("scale", 1.0))
+        if abs(rotate_deg) > 1e-12 or abs(scale_val - 1.0) > 1e-12:
+            th = np.deg2rad(-rotate_deg)
+            c, s = np.cos(th), np.sin(th)
+            A = scale_val * np.array([[c, s], [-s, c]], dtype=np.float64)
+            A_inv = np.linalg.inv(A)
+            out = (out - origin_arr.reshape(1, 2)) @ A_inv.T + origin_arr.reshape(1, 2)
+
+        return out.astype(np.float32)
+
+    def save_step_points_overlay(
+        base_img: np.ndarray,
+        pts: np.ndarray,
+        filename: str,
+        title: str,
+        color_bgr=(0, 0, 255),
+        radius: int = 1,
+    ) -> None:
+        """Save per-step coordinate overlay for debugging transform consistency."""
+        if base_img is None:
+            return
+        canvas = base_img.copy()
+        h, w = canvas.shape[:2]
+        pts_arr = np.asarray(pts, dtype=np.float64)
+        if pts_arr.ndim != 2 or pts_arr.shape[1] < 2:
+            out = os.path.join(output_dir, filename)
+            cv2.imwrite(out, canvas)
+            print(f"[WARN] {title}: invalid points shape, saved empty overlay -> {out}")
+            return
+
+        xy = np.rint(pts_arr[:, :2]).astype(np.int32)
+        valid = (xy[:, 0] >= 0) & (xy[:, 0] < w) & (xy[:, 1] >= 0) & (xy[:, 1] < h)
+        n_valid = int(valid.sum())
+        for x, y in xy[valid]:
+            cv2.circle(canvas, (int(x), int(y)), int(radius), color_bgr, -1, lineType=cv2.LINE_AA)
+
+        out = os.path.join(output_dir, filename)
+        cv2.imwrite(out, canvas)
+        print(f"[OK] {title}: {n_valid}/{xy.shape[0]} points inside canvas -> {out}")
     
     # 1. Initialize & Load
     H, W = 864, 1152
@@ -323,7 +431,26 @@ def align_and_process_images(
     im2_pil_raw = Image.open(img2_path).convert('RGB')
     orig_W, orig_H = im1_pil_raw.size
     orig_W2, orig_H2 = im2_pil_raw.size
-    
+
+    target_reg_W, target_reg_H = orig_W, orig_H
+    registration_img1_path = img1_path
+
+    if auto_upscale_reference:
+        target_long = max(orig_W, orig_H)
+        source_long = max(orig_W2, orig_H2)
+        if target_long < source_long:
+            reference_upscale_factor = float(source_long) / float(max(target_long, 1))
+            target_reg_W = max(1, int(round(orig_W * reference_upscale_factor)))
+            target_reg_H = max(1, int(round(orig_H * reference_upscale_factor)))
+            im1_pil_raw = im1_pil_raw.resize((target_reg_W, target_reg_H), Image.Resampling.BILINEAR)
+            im1_pil_raw.save(img1_path)
+            registration_img1_path = img1_path
+            print(
+                f"Reference image was upscaled and overwritten before registration: "
+                f"{orig_W}x{orig_H} -> {target_reg_W}x{target_reg_H} "
+                f"(scale={reference_upscale_factor:.4f})"
+            )
+
     im1_bgr_orig = cv2.cvtColor(np.array(im1_pil_raw), cv2.COLOR_RGB2BGR)
     im2_bgr_orig = cv2.cvtColor(np.array(im2_pil_raw), cv2.COLOR_RGB2BGR)
     
@@ -331,7 +458,7 @@ def align_and_process_images(
     
     # 2. RoMa Logic
     print("Running RoMa matching...")
-    warp, certainty = roma_model.match(img1_path, img2_path, device=device)
+    warp, certainty = roma_model.match(registration_img1_path, img2_path, device=device)
     edge_weight = compute_edge_weight(img2_path, H, W, device)
     edge_full = torch.cat((torch.zeros_like(edge_weight), edge_weight), dim=1)
     
@@ -373,10 +500,9 @@ def align_and_process_images(
     print("Warping images...")
 
     
-    fill_color = im2_bgr_orig[10, 10].tolist()
-    
-    
-    print(f"Padding fill color (from 10,10): {fill_color}")
+    fill_color = (255, 255, 255)
+
+    print(f"Padding fill color: {fill_color}")
     # ================= End of modification =================
 
     im2_resized = cv2.cvtColor(np.array(im2_pil_raw.resize((W, H))), cv2.COLOR_RGB2BGR)
@@ -388,20 +514,34 @@ def align_and_process_images(
     
     elif method.lower() == 'bspline':
         
-        warped_small = warp_image_bspline(im2_resized, M, (W, H)).astype(np.uint8)
+        warped_small = warp_image_bspline(
+            im2_resized,
+            M,
+            (W, H),
+            default_pixel_value=255,
+        ).astype(np.uint8)
     
     elif method.lower() == 'affine+bspline':
         
         im2_aff = cv2.warpAffine(im2_resized, M, (W, H), borderValue=fill_color)
         
         
-        warped_small = warp_image_bspline(im2_aff, tx_bspline, (W, H)).astype(np.uint8)
+        warped_small = warp_image_bspline(
+            im2_aff,
+            tx_bspline,
+            (W, H),
+            default_pixel_value=255,
+        ).astype(np.uint8)
     
     else:
         # Default: affine
         warped_small = cv2.warpAffine(im2_resized, M, (W, H), borderValue=fill_color)
         
-    warped_im2_orig = cv2.resize(warped_small, (orig_W, orig_H), interpolation=cv2.INTER_LINEAR)
+    warped_im2_orig = cv2.resize(
+        warped_small,
+        (target_reg_W, target_reg_H),
+        interpolation=cv2.INTER_LINEAR,
+    )
     if h5ad_path is not None:
         # 5. H5AD Processing
         print("Processing H5AD coordinates...")
@@ -438,13 +578,26 @@ def align_and_process_images(
             
             # Load the initial coordinates
             pts = get_coords(adata)
+            pts = apply_render_forward(pts, source_render_meta)
+            save_step_points_overlay(
+                im2_bgr_orig,
+                pts,
+                "debug_step_00_source_in_render_space.png",
+                "Step 00 source coordinates mapped to render space",
+            )
             
             # --- Pre-transform (Rotate/Scale) ---
-            if (abs(rotate) > 1e-12) or (abs(scale - 1.0) > 1e-12):
+            if source_render_meta is None and ((abs(rotate) > 1e-12) or (abs(scale - 1.0) > 1e-12)):
                 print(f"🔄 Applying manual pre-transform: rotate={rotate}°, scale={scale}")
                 pts = apply_manual_transform(pts, rotate, scale, origin=origin)
                 # Update the intermediate result
                 update_coords_in_adata(adata, pts, x_obs_col, y_obs_col, spatial_key)
+                save_step_points_overlay(
+                    im2_bgr_orig,
+                    pts,
+                    "debug_step_01_after_manual_pretransform.png",
+                    "Step 01 after manual pre-transform (source canvas)",
+                )
 
             # --- Scaling to Registration Resolution ---
             scale_x, scale_y = W / orig_W2, H / orig_H2
@@ -453,6 +606,12 @@ def align_and_process_images(
             
             # Update the intermediate result
             update_coords_in_adata(adata, pts, x_obs_col, y_obs_col, spatial_key)
+            save_step_points_overlay(
+                im2_resized,
+                pts,
+                "debug_step_02_after_resize_to_registration.png",
+                "Step 02 after resize to registration grid (source resized canvas)",
+            )
             
             # --- Transform (Registration) ---
             if method.lower() == 'bspline':
@@ -467,16 +626,36 @@ def align_and_process_images(
             
             # Update the intermediate result
             update_coords_in_adata(adata, pts_t, x_obs_col, y_obs_col, spatial_key)
+            save_step_points_overlay(
+                im1_resized,
+                pts_t,
+                "debug_step_03_after_registration_transform.png",
+                "Step 03 after registration transform (target resized canvas)",
+            )
                 
             # --- Rescale back to Original Resolution ---
-            scale_x_back, scale_y_back = orig_W / W, orig_H / H
+            scale_x_back, scale_y_back = target_reg_W / W, target_reg_H / H
             pts_transformed_orig = pts_t.copy()
             pts_transformed_orig[:, 0] *= scale_x_back
             pts_transformed_orig[:, 1] *= scale_y_back
+            save_step_points_overlay(
+                im1_bgr_orig,
+                pts_transformed_orig,
+                "debug_step_04_after_rescale_back.png",
+                "Step 04 after rescale back (target original canvas)",
+            )
+
+            pts_final = apply_render_inverse(pts_transformed_orig, target_render_meta)
+            save_step_points_overlay(
+                im1_bgr_orig,
+                apply_render_forward(pts_final, target_render_meta),
+                "debug_step_05_final_inverse_check.png",
+                "Step 05 inverse-mapped final coordinates (reprojected to target render space)",
+            )
             
             # --- Final data update (final save) ---
             # This is where the requested save-location decision logic is applied
-            update_coords_in_adata(adata, pts_transformed_orig, x_obs_col, y_obs_col, spatial_key)
+            update_coords_in_adata(adata, pts_final, x_obs_col, y_obs_col, spatial_key)
             
             # === [Sanitize] Clean _index issues ===
             def sanitize_dataframe(df, name="df"):
@@ -512,8 +691,8 @@ def align_and_process_images(
 
     # 6. Basic Visualization (Save to disk only)
     kpts1_orig = kpts1.copy()
-    kpts1_orig[:, 0] *= (orig_W / W)
-    kpts1_orig[:, 1] *= (orig_H / H)
+    kpts1_orig[:, 0] *= (target_reg_W / W)
+    kpts1_orig[:, 1] *= (target_reg_H / H)
     kpts2_orig = kpts2.copy()
     kpts2_orig[:, 0] *= (orig_W2 / W)
     kpts2_orig[:, 1] *= (orig_H2 / H)
@@ -524,6 +703,7 @@ def align_and_process_images(
     h1, w1 = im1_bgr_orig.shape[:2]
     h2, w2 = warped_im2_orig.shape[:2]
     if h1 != h2: warped_im2_orig = cv2.resize(warped_im2_orig, (w2, h1))
+    cv2.imwrite(os.path.join(output_dir, "aligned_source_img2.png"), warped_im2_orig)
     vis_compare = np.concatenate((im1_bgr_orig, warped_im2_orig), axis=1)
     cv2.imwrite(os.path.join(output_dir, "2_alignment_compare.jpg"), vis_compare)
     

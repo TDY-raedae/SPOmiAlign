@@ -1,174 +1,475 @@
-import os 
-import cv2 
-import sys 
-import numpy as np
+﻿# Auto-generated from demo/notebook/sm2st.ipynb
+
+# # SPOmiAlign Demo: Image to Image Section Alignment
+#
+# This notebook follows a fixed workflow:
+# 1. Input unaligned slices (paired images)
+# 2. Imaging (generation of spatial structural images, SSI)
+# 3. Sections matching and warpping
+# 4. Reassignment
+# 5. Output aligned slices
+#
+# This version fixes the reassignment roles explicitly:
+# - `S1 / aligned SM = high resolution`
+# - `S2 / reference ST = low resolution`
+#
+
+# ## 1. Input unaligned slices (paired images)
+
+import os
+import sys
 from pathlib import Path
 
-# --- 添加路径以便导入模块 ---
-# 如果你的 roma.py, data_preprocessing.py 和 reassignment.py 都在同级目录或 ../../SPOmiAlign
-sys.path.append("../../SPOmiAlign")
+import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import scanpy as sc
+from scipy.spatial import cKDTree
 
+
+
+NOTEBOOK_DIR = Path().resolve()
+DEMO_DIR = NOTEBOOK_DIR.parent
+PROJECT_ROOT = DEMO_DIR.parent
+print(PROJECT_ROOT)
+sys.path.append(str(PROJECT_ROOT / "SPOmiAlign"))
+
+from data_preprocessing import scatter_h5ad_to_image
+from reassignment_direction import (
+    build_reassigned_h5ad_from_mapping,
+    cmap_blue,
+    cmap_orange,
+    get_spatial_from_adata,
+    mean_internal_nn_distance,
+    plot_h5ad_umi_squares,
+)
 from roma import align_and_process_images
-from data_preprocessing import rasterize_h5ad_to_image
-# ✅ 新增：从 reassignment.py 导入核心处理函数
-from reassignment import spomialign_reassignment
 
-# =========================
-# 配置路径
-# =========================
-DATA_DIR = "../../SPOmiAlign_Repro"
-h5ad_img1_path = os.path.join(DATA_DIR, "output_h5ad", "st_withIntensity.h5ad") # Target (ST)
-h5ad_img2_path = os.path.join(DATA_DIR, "output_h5ad", "sm_withIntensity.h5ad") # Source (SM)
 
-SAVE_DIR = "../../output"
-SAVE_PATH = os.path.join(SAVE_DIR, "h5ad_2_h5ad", "sm2st")
-os.makedirs(SAVE_PATH, exist_ok=True)
-print(f"目录已准备就绪: {os.path.abspath(SAVE_PATH)}")
+def _first_existing_path(candidates):
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
-# =========================
-# 文件检查
-# =========================
-files_to_check = {
-    "H5AD 目标数据": h5ad_img1_path,
-    "H5AD 源数据": h5ad_img2_path
-}
 
-print("\n🔍 正在检查输入文件...")
-missing_files = []
-for name, path in files_to_check.items():
-    if os.path.exists(path):
-        file_size = os.path.getsize(path) / (1024 * 1024)
-        print(f"✅ {name} 已找到: {os.path.basename(path)} ({file_size:.2f} MB)")
+def _read_image(image_path):
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    if image is None:
+        raise FileNotFoundError(f"Failed to read image: {image_path}")
+    return image
+
+
+def _fit_to_reference_canvas(reference_img, moving_img):
+    ref_h, ref_w = reference_img.shape[:2]
+    mov_h, mov_w = moving_img.shape[:2]
+    canvas = np.full((ref_h, ref_w, 3), 255, dtype=np.uint8)
+    canvas[: min(ref_h, mov_h), : min(ref_w, mov_w)] = moving_img[
+        : min(ref_h, mov_h), : min(ref_w, mov_w)
+    ]
+    return canvas
+
+
+def _blend_on_reference(reference_path, moving_path, out_path, alpha_reference=0.55, alpha_moving=0.45):
+    reference_img = _read_image(reference_path)
+    moving_img = _read_image(moving_path)
+    moving_canvas = _fit_to_reference_canvas(reference_img, moving_img)
+    overlay = cv2.addWeighted(reference_img, alpha_reference, moving_canvas, alpha_moving, 0)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(out_path), overlay)
+    return out_path
+
+
+def _prepare_directional_inputs(st_h5ad_path, sm_h5ad_path, aligned_sm_h5ad_path, out_dir):
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    st_adata = sc.read_h5ad(str(st_h5ad_path))
+    st_adata.obsm["spatial_raw"] = np.asarray(st_adata.obsm["spatial"]).copy()
+    st_with_keys_path = out_dir / "st_with_reference_keys.h5ad"
+    st_adata.write_h5ad(str(st_with_keys_path), compression="gzip")
+
+    sm_raw_adata = sc.read_h5ad(str(sm_h5ad_path))
+    sm_aligned_adata = sc.read_h5ad(str(aligned_sm_h5ad_path))
+    raw_xy = np.asarray(sm_raw_adata.obsm["spatial"]).copy()
+    aligned_xy = np.asarray(sm_aligned_adata.obsm["spatial"]).copy()
+
+    if raw_xy.shape[0] != aligned_xy.shape[0]:
+        raise ValueError("The original SM and aligned SM H5AD files do not have the same number of spots.")
+
+    sm_aligned_adata.obsm["spatial_raw"] = raw_xy
+    sm_aligned_adata.obsm["spatial_spomialign"] = aligned_xy.copy()
+    sm_aligned_adata.obsm["spatial"] = aligned_xy.copy()
+    sm_with_keys_path = out_dir / "sm_with_spomialign.h5ad"
+    sm_aligned_adata.write_h5ad(str(sm_with_keys_path), compression="gzip")
+
+    return st_with_keys_path, sm_with_keys_path
+
+
+def _run_directional_reassignment_fixed_roles(s1_h5ad, s2_h5ad, direction, out_dir, plot_dir, s1_spatial_key, s2_spatial_key):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    plot_dir.mkdir(parents=True, exist_ok=True)
+
+    adata_s1 = sc.read_h5ad(str(s1_h5ad))
+    adata_s2 = sc.read_h5ad(str(s2_h5ad))
+
+    high_xy = get_spatial_from_adata(adata_s1, s1_spatial_key)
+    low_xy = get_spatial_from_adata(adata_s2, s2_spatial_key)
+
+    def _clean_xy(xy):
+        mask = np.isfinite(xy).all(axis=1)
+        return xy[mask, :], mask
+
+    high_xy_clean, high_mask = _clean_xy(high_xy)
+    low_xy_clean, low_mask = _clean_xy(low_xy)
+
+    if high_xy_clean.shape[0] == 0 or low_xy_clean.shape[0] == 0:
+        raise ValueError("S1 or S2 has no valid coordinates after filtering.")
+
+    mean_high, _ = mean_internal_nn_distance(high_xy_clean)
+    mean_low, nn_low = mean_internal_nn_distance(low_xy_clean)
+    d_ref_max = float(np.max(nn_low)) if nn_low.size > 0 else 0.0
+
+    print(f"Using fixed roles for {direction}:")
+    print("  S1 / aligned SM = high resolution")
+    print("  S2 / reference ST = low resolution")
+    print(f"  S1 valid spots: {high_xy_clean.shape[0]} / {high_xy.shape[0]}")
+    print(f"  S2 valid spots: {low_xy_clean.shape[0]} / {low_xy.shape[0]}")
+    print(f"  S1 mean NN distance: {mean_high:.4f}")
+    print(f"  S2 mean NN distance: {mean_low:.4f}")
+    print(f"  Low-resolution d_ref_max: {d_ref_max:.4f}")
+
+    high_indices_all = np.where(high_mask)[0]
+    low_indices_all = np.where(low_mask)[0]
+
+    tree_low = cKDTree(low_xy_clean)
+    dist, idx = tree_low.query(high_xy_clean, k=1)
+    valid = dist <= 2.0 * d_ref_max if d_ref_max > 0 else np.ones_like(dist, dtype=bool)
+    print(f"  Filtered out high-resolution spots: {int(np.sum(~valid))}")
+
+    high_idx_clean = high_indices_all[valid]
+    low_idx_clean = low_indices_all[idx[valid]]
+    dist_f = dist[valid]
+
+    if direction == "high_to_low":
+        mapping = pd.DataFrame(
+            {
+                "source_index": high_idx_clean,
+                "target_index": low_idx_clean,
+                "source_x": high_xy_clean[valid][:, 0],
+                "source_y": high_xy_clean[valid][:, 1],
+                "target_x": low_xy_clean[idx[valid]][:, 0],
+                "target_y": low_xy_clean[idx[valid]][:, 1],
+                "distance": dist_f,
+            }
+        )
+        out_h5ad = out_dir / "reassigned_high_to_low_on_st.h5ad"
+        reassigned_cmap = cmap_orange
+    elif direction == "low_to_high":
+        mapping = pd.DataFrame(
+            {
+                "source_index": low_idx_clean,
+                "target_index": high_idx_clean,
+                "source_x": low_xy_clean[idx[valid]][:, 0],
+                "source_y": low_xy_clean[idx[valid]][:, 1],
+                "target_x": high_xy_clean[valid][:, 0],
+                "target_y": high_xy_clean[valid][:, 1],
+                "distance": dist_f,
+            }
+        )
+        out_h5ad = out_dir / "reassigned_low_to_high_on_sm.h5ad"
+        reassigned_cmap = cmap_blue
     else:
-        print(f"❌ {name} 不存在: {os.path.abspath(path)}")
-        missing_files.append(path)
+        raise ValueError("direction must be 'high_to_low' or 'low_to_high'.")
 
-if missing_files:
-    sys.exit("❌ 程序终止：缺失必要输入文件。")
-else:
-    print("🚀 所有文件准备就绪，准备开始处理。\n" + "-"*30)
+    print(mapping.head())
 
-# =========================
-# 步骤一：H5AD 转化成图像
-# =========================
-print("🚀 步骤一 H5ad转化成图像。\n" + "-"*30)
-Gen_img1_path = os.path.join(SAVE_PATH, "st.png")
-Gen_img2_path = os.path.join(SAVE_PATH, "sm.png")
+    meta = {
+        "low_res_name": "S2",
+        "high_res_name": "S1",
+        "d_ref_max": d_ref_max,
+        "reassignment_direction": direction,
+        "s1_spatial_key": s1_spatial_key,
+        "s2_spatial_key": s2_spatial_key,
+    }
 
-# 生成 Target 图像
-rasterize_h5ad_to_image(
-    input_h5ad=h5ad_img1_path,
-    output_png=Gen_img1_path,
+    map_csv = out_dir / f"{direction}_mapping.csv"
+    mapping.to_csv(map_csv, index=False)
+
+    plot_h5ad_umi_squares(
+        adata_s1,
+        out_png=str(plot_dir / "S1_umi.png"),
+        title=f"S1 UMI ({s1_spatial_key})",
+        spatial_key=s1_spatial_key,
+        cmap=cmap_orange,
+    )
+    plot_h5ad_umi_squares(
+        adata_s2,
+        out_png=str(plot_dir / "S2_umi.png"),
+        title=f"S2 UMI ({s2_spatial_key})",
+        spatial_key=s2_spatial_key,
+        cmap=cmap_blue,
+    )
+
+    adata_new = build_reassigned_h5ad_from_mapping(
+        mapping=mapping,
+        meta=meta,
+        adata_s1=adata_s1,
+        adata_s2=adata_s2,
+        out_h5ad=str(out_h5ad),
+        scale_by_mapping_factor=True,
+        reserved_col=None,
+    )
+
+    plot_h5ad_umi_squares(
+        adata_new,
+        out_png=str(plot_dir / f"reassigned_{direction}_umi.png"),
+        title=f"Reassigned ({direction}) UMI",
+        spatial_key="spatial",
+        cmap=reassigned_cmap,
+    )
+
+    return out_h5ad, map_csv, meta
+
+
+def _label_for_dataset(dataset_name):
+    if dataset_name == "S1":
+        return "S1: aligned SM"
+    if dataset_name == "S2":
+        return "S2: reference ST"
+    return dataset_name
+
+
+def _show_bgr(ax, image_path, title):
+    image = _read_image(image_path)
+    ax.imshow(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    ax.set_title(title)
+    ax.axis("off")
+
+
+DATA_DIR = Path(
+    os.environ.get("SPOMIALIGN_DEMO_DATA_DIR", DEMO_DIR / "SPOmiAlign_Repro")
+).expanduser()
+SAVE_DIR = Path(
+    os.environ.get("SPOMIALIGN_DEMO_SAVE_DIR", DEMO_DIR / "output")
+).expanduser()
+SAVE_PATH = SAVE_DIR / "h5ad_2_h5ad/sm2st1"
+SAVE_PATH.mkdir(parents=True, exist_ok=True)
+
+st_candidates = [
+    DATA_DIR / "output_h5ad" / "st_withIntensity.h5ad",
+    DATA_DIR / "st_withIntensity.h5ad",
+    DATA_DIR / "st.h5ad",
+]
+sm_candidates = [
+    DATA_DIR / "output_h5ad" / "sm_withIntensity.h5ad",
+    DATA_DIR / "sm_withIntensity.h5ad",
+    DATA_DIR / "sm.h5ad",
+]
+
+h5ad_img1_path = _first_existing_path(st_candidates)
+h5ad_img2_path = _first_existing_path(sm_candidates)
+assert h5ad_img1_path is not None, f"Target ST H5AD not found. Checked: {st_candidates}"
+assert h5ad_img2_path is not None, f"Source SM H5AD not found. Checked: {sm_candidates}"
+
+print(f"Data directory: {DATA_DIR}")
+print(f"Output directory: {SAVE_PATH}")
+print(f"Target ST H5AD: {h5ad_img1_path}")
+print(f"Source SM H5AD: {h5ad_img2_path}")
+
+
+# ## 2. Imaging (generation of spatial structural images, SSI)
+
+# %matplotlib inline
+Gen_img1_path = SAVE_PATH / "st_scatter.png"
+Gen_img2_path = SAVE_PATH / "sm_scatter.png"
+
+scatter_h5ad_to_image(
+    input_h5ad=str(h5ad_img1_path),
+    output_png=str(Gen_img1_path),
     background="white",
     point_shape="square",
     radius=15,
     threshold_percentile=None,
     intensity_log_transform=False,
-    enhance=False,
     rotate=0.0,
     scale=1.0,
+    display_long_side=2200,
+    padding=32,
+    dpi=200,
+    marker_alpha=0.9,
+    gray_min=0.35,
+    gray_max=0.88,
 )
 
-# 生成 Source 图像
-rasterize_h5ad_to_image(
-    input_h5ad=h5ad_img2_path,
-    output_png=Gen_img2_path,
+_, origin = scatter_h5ad_to_image(
+    input_h5ad=str(h5ad_img2_path),
+    output_png=str(Gen_img2_path),
     background="white",
     point_shape="square",
     radius=12,
     threshold_percentile=None,
     intensity_log_transform=False,
-    enhance=False,
     rotate=60.0,
     scale=0.6,
+    display_long_side=2200,
+    padding=32,
+    dpi=200,
+    marker_alpha=0.9,
+    gray_min=0.35,
+    gray_max=0.88,
 )
 
-# =========================
-# 步骤二：图像对齐 (Alignment)
-# =========================
-print("🚀 步骤二 将h5ad图像和target图像对齐。\n" + "-"*30)
-save_path_alignment = os.path.join(SAVE_PATH, "alignment")
-transformed_h5ad_path = os.path.join(save_path_alignment, "transformed.h5ad") # 这是对齐后的中间结果
-transformed_h5ad_img_path = os.path.join(save_path_alignment, "transformed_h5ad.png")
+fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+_show_bgr(axes[0], Gen_img1_path, "Target ST SSI")
+_show_bgr(axes[1], Gen_img2_path, "Source SM SSI")
+plt.tight_layout()
+plt.show()
+
+
+# ## 3. Sections matching and warpping
+
+save_path_alignment = SAVE_PATH / "alignment"
+save_path_alignment.mkdir(parents=True, exist_ok=True)
+transformed_h5ad_path = save_path_alignment / "transformed.h5ad"
+transformed_h5ad_img_path = save_path_alignment / "transformed_h5ad_scatter.png"
 
 align_and_process_images(
-    img1_path=Gen_img1_path, 
-    img2_path=Gen_img2_path, 
-    h5ad_path=h5ad_img2_path,  
-    method='affine+bspline', 
-    output_dir=save_path_alignment,
-    rotate=0.0, 
+    img1_path=str(Gen_img1_path),
+    img2_path=str(Gen_img2_path),
+    h5ad_path=str(h5ad_img2_path),
+    method="affine+bspline",
+    output_dir=str(save_path_alignment),
+    rotate=0.0,
     scale=1.0,
+    origin=origin,
 )
 
-# 生成对齐后的预览图
-rasterize_h5ad_to_image(
-    input_h5ad=transformed_h5ad_path,
-    output_png=transformed_h5ad_img_path,
+scatter_h5ad_to_image(
+    input_h5ad=str(transformed_h5ad_path),
+    output_png=str(transformed_h5ad_img_path),
     background="white",
     point_shape="square",
     radius=12,
     threshold_percentile=None,
     intensity_log_transform=False,
-    enhance=False,
-    rotate=0.0,
+    rotate=60.0,
     scale=1.0,
+    display_long_side=2200,
+    padding=32,
+    dpi=200,
+    marker_alpha=0.9,
+    gray_min=0.35,
+    gray_max=0.88,
 )
 
-# =========================
-# 步骤三：叠加预览 (Visualization)
-# =========================
-print("\n🚀 步骤三 正在生成直接叠加对比图...")
+before_overlay_path = save_path_alignment / "before_alignment_vs_reference.png"
+after_overlay_path = save_path_alignment / "after_alignment_vs_reference.png"
+_blend_on_reference(Gen_img1_path, Gen_img2_path, before_overlay_path)
+_blend_on_reference(Gen_img1_path, transformed_h5ad_img_path, after_overlay_path)
 
-target_img = cv2.imread(Gen_img1_path)
-aligned_h5ad_gray = cv2.imread(transformed_h5ad_img_path, cv2.IMREAD_GRAYSCALE)
+fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+_show_bgr(axes[0], before_overlay_path, "Before alignment vs ST reference")
+_show_bgr(axes[1], after_overlay_path, "After alignment vs ST reference")
+plt.tight_layout()
+plt.show()
 
-if target_img is None or aligned_h5ad_gray is None:
-    print("❌ 图像读取失败，跳过预览生成。")
-else:
-    aligned_h5ad_bgr = cv2.cvtColor(aligned_h5ad_gray, cv2.COLOR_GRAY2BGR)
-    t_h, t_w = target_img.shape[:2]
-    a_h, a_w = aligned_h5ad_bgr.shape[:2]
 
-    # 白色背景画布
-    h5ad_full_canvas = np.full((t_h, t_w, 3), 255, dtype=np.uint8)
-    h_limit = min(t_h, a_h)
-    w_limit = min(t_w, a_w)
-    h5ad_full_canvas[:h_limit, :w_limit] = aligned_h5ad_bgr[:h_limit, :w_limit]
+# ## 4. Reassignment
 
-    # 叠加
-    overlay_img = cv2.addWeighted(target_img, 0.5, h5ad_full_canvas, 0.5, 0)
-    
-    # 保存
-    overlay_save_path = os.path.join(save_path_alignment, "h5ad_alignment_overlay.png")
-    cv2.imwrite(overlay_save_path, overlay_img)
-    
-    comparison = np.hstack((target_img, overlay_img))
-    cv2.imwrite(os.path.join(save_path_alignment, "h5ad_side_by_side.png"), comparison)
-    print(f"✅ 叠加预览图已保存：{overlay_save_path}")
+# The reassignment step below does not auto-infer high/low resolution. It always uses:
+# - `S1 / aligned SM` as high resolution
+# - `S2 / reference ST` as low resolution
 
-# =========================
-# 步骤四：Reassignment (数据重分配)
-# =========================
-print("\n🚀 步骤四 执行 Reassignment...")
-print("-" * 30)
-
-# 定义最终输出路径
-final_reassigned_h5ad = os.path.join(SAVE_PATH, "sm2st_final_reassigned.h5ad")
-mapping_csv_path = os.path.join(SAVE_PATH, "sm2st_mapping_table.csv")
-
-# 调用导入的函数
-# s1_h5ad = 目标 (Target/ST)
-# s2_h5ad = 对齐后的源数据 (Transformed Source/SM) -> 这一步很关键，必须用 transformed_h5ad_path
-spomialign_reassignment(
-    s1_h5ad=h5ad_img1_path,         
-    s2_h5ad=transformed_h5ad_path,  
-    out_h5ad=final_reassigned_h5ad,
-    map_csv=mapping_csv_path,
-    id_col="id",                    # 根据你数据中的 ID 列名调整
-    cluster_col="cluster",          # 想要从 ST 继承的列
-    s2_cluster_col=["s2_cluster_col"], # 想要从 SM 继承的列
-    scale_by_mapping_factor=True    # 开启密度归一化
+directional_input_dir = SAVE_PATH / "directional_inputs"
+st_with_keys_path, sm_with_keys_path = _prepare_directional_inputs(
+    st_h5ad_path=h5ad_img1_path,
+    sm_h5ad_path=h5ad_img2_path,
+    aligned_sm_h5ad_path=transformed_h5ad_path,
+    out_dir=directional_input_dir,
 )
 
-print("\n✨✨✨ 所有流程执行完毕！ ✨✨✨")
+high_to_low_dir = SAVE_PATH / "high_to_low"
+high_to_low_plot_dir = high_to_low_dir / "plots"
+high_to_low_out_h5ad, high_to_low_map_csv, high_to_low_meta = _run_directional_reassignment_fixed_roles(
+    s1_h5ad=sm_with_keys_path,
+    s2_h5ad=st_with_keys_path,
+    direction="high_to_low",
+    out_dir=high_to_low_dir,
+    plot_dir=high_to_low_plot_dir,
+    s1_spatial_key="spatial_spomialign",
+    s2_spatial_key="spatial_raw",
+)
+
+low_to_high_dir = SAVE_PATH / "low_to_high"
+low_to_high_plot_dir = low_to_high_dir / "plots"
+low_to_high_out_h5ad, low_to_high_map_csv, low_to_high_meta = _run_directional_reassignment_fixed_roles(
+    s1_h5ad=sm_with_keys_path,
+    s2_h5ad=st_with_keys_path,
+    direction="low_to_high",
+    out_dir=low_to_high_dir,
+    plot_dir=low_to_high_plot_dir,
+    s1_spatial_key="spatial_spomialign",
+    s2_spatial_key="spatial_raw",
+)
+
+print(f"SM with spatial_spomialign: {sm_with_keys_path}")
+print(f"ST with spatial_raw: {st_with_keys_path}")
+print(f"High-to-low H5AD: {high_to_low_out_h5ad}")
+print(f"Low-to-high H5AD: {low_to_high_out_h5ad}")
+
+
+# ## 5. Output aligned slices
+
+fig, axes = plt.subplots(1, 4, figsize=(24, 6))
+_show_bgr(axes[0], Gen_img1_path, "Reference ST")
+_show_bgr(axes[1], Gen_img2_path, "SM before alignment")
+_show_bgr(axes[2], before_overlay_path, "Before alignment vs reference")
+_show_bgr(axes[3], after_overlay_path, "After alignment vs reference")
+fig.suptitle("Alignment comparison before and after", fontsize=18)
+plt.tight_layout()
+plt.show()
+
+high_low_low_name = high_to_low_meta["low_res_name"]
+high_low_high_name = high_to_low_meta["high_res_name"]
+low_high_low_name = low_to_high_meta["low_res_name"]
+low_high_high_name = low_to_high_meta["high_res_name"]
+
+fig, axes = plt.subplots(2, 3, figsize=(18, 11))
+_show_bgr(
+    axes[0, 0],
+    high_to_low_plot_dir / f"{high_low_high_name}_umi.png",
+    f"High-resolution input ({_label_for_dataset(high_low_high_name)})",
+)
+_show_bgr(
+    axes[0, 1],
+    high_to_low_plot_dir / f"{high_low_low_name}_umi.png",
+    f"Low-resolution reference ({_label_for_dataset(high_low_low_name)})",
+)
+_show_bgr(
+    axes[0, 2],
+    high_to_low_plot_dir / "reassigned_high_to_low_umi.png",
+    "After high-to-low reassignment",
+)
+
+_show_bgr(
+    axes[1, 0],
+    low_to_high_plot_dir / f"{low_high_low_name}_umi.png",
+    f"Low-resolution input ({_label_for_dataset(low_high_low_name)})",
+)
+_show_bgr(
+    axes[1, 1],
+    low_to_high_plot_dir / f"{low_high_high_name}_umi.png",
+    f"High-resolution reference ({_label_for_dataset(low_high_high_name)})",
+)
+_show_bgr(
+    axes[1, 2],
+    low_to_high_plot_dir / "reassigned_low_to_high_umi.png",
+    "After low-to-high reassignment",
+)
+
+fig.suptitle("Resolution adjustment comparison before and after", fontsize=18)
+plt.tight_layout()
+plt.show()
+
+
