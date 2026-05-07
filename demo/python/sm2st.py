@@ -29,10 +29,9 @@ from scipy.spatial import cKDTree
 
 
 
-NOTEBOOK_DIR = Path().resolve()
+NOTEBOOK_DIR = Path(__file__).resolve().parent
 DEMO_DIR = NOTEBOOK_DIR.parent
 PROJECT_ROOT = DEMO_DIR.parent
-print(PROJECT_ROOT)
 sys.path.append(str(PROJECT_ROOT / "SPOmiAlign"))
 
 from data_preprocessing import scatter_h5ad_to_image

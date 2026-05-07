@@ -25,11 +25,10 @@ from scipy.spatial import cKDTree
 
 # %matplotlib inline
 
-NOTEBOOK_DIR = Path().resolve()
+NOTEBOOK_DIR = Path(__file__).resolve().parent
 DEMO_DIR = NOTEBOOK_DIR.parent
 PROJECT_ROOT = DEMO_DIR.parent
 sys.path.append(str(PROJECT_ROOT / "SPOmiAlign"))
-sys.path.append(str(PROJECT_ROOT / "new" / "Code"))
 
 from align_h5ad_to_h5ad_square import (
     build_render_meta,
@@ -171,7 +170,7 @@ env_data_dir = os.environ.get("SPOMIALIGN_R114_DIR")
 data_candidates = []
 if env_data_dir:
     data_candidates.append(Path(env_data_dir))
-data_candidates.extend([Path("/storage/hermes/yiwang/spomialign/SPOmiAlign-main/demo/SPOmiAlign_Repro/output_h5ad/R114"), PROJECT_ROOT / "new" / "Data" / "standardized_data" / "R114"])
+data_candidates.append(DEMO_DIR / "SPOmiAlign_Repro" / "output_h5ad" / "R114")
 DATA_DIR = _first_existing_path(data_candidates)
 if DATA_DIR is None:
     raise FileNotFoundError("R114 data directory not found.")

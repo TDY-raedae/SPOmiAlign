@@ -22,8 +22,8 @@ import numpy as np
 
 
 
-# Resolve repo-relative imports so the notebook can run from demo/notebook.
-NOTEBOOK_DIR = Path().resolve()
+# Resolve repo-relative imports so the script can run from any working directory.
+NOTEBOOK_DIR = Path(__file__).resolve().parent
 DEMO_DIR = NOTEBOOK_DIR.parent
 PROJECT_ROOT = DEMO_DIR.parent
 sys.path.append(str(PROJECT_ROOT / "SPOmiAlign"))
@@ -34,12 +34,10 @@ from roma import align_and_process_images
 # fixed image = Puck_Num_57, moving image = 092.
 source_candidates = [
     Path(os.environ.get("SPOMIALIGN_092_SOURCE", "")) if os.environ.get("SPOMIALIGN_092_SOURCE") else None,
-    Path("/storage/hermes/yiwang/spomialign/SPOmiAlign-main/demo/SPOmiAlign_Repro/output_image/092.png"),
     DEMO_DIR / "SPOmiAlign_Repro" / "output_image" / "092.png",
 ]
 target_candidates = [
     Path(os.environ.get("SPOMIALIGN_PUCK57_TARGET", "")) if os.environ.get("SPOMIALIGN_PUCK57_TARGET") else None,
-    Path("/storage/hermes/yiwang/spomialign/SPOmiAlign-main/demo/SPOmiAlign_Repro/output_image/Puck_Num_57.png"),
     DEMO_DIR / "SPOmiAlign_Repro" / "output_image" / "Puck_Num_57.png",
 ]
 

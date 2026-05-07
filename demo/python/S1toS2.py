@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 
 
 
-NOTEBOOK_DIR = Path().resolve()
+NOTEBOOK_DIR = Path(__file__).resolve().parent
 DEMO_DIR = NOTEBOOK_DIR.parent
 PROJECT_ROOT = DEMO_DIR.parent
 sys.path.append(str(PROJECT_ROOT / "SPOmiAlign"))
