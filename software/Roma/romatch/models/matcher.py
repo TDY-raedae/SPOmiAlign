@@ -8,7 +8,7 @@ import torch.nn.functional as F
 from einops import rearrange
 from warnings import warn
 from PIL import Image
-import cv2  # <--- 新增引用
+import cv2 
 
 from romatch.utils import get_tuple_transform_ops
 from romatch.utils.local_correlation import local_correlation

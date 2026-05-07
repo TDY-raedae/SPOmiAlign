@@ -20,7 +20,6 @@ The comparison figure is placed directly below Fig. 1 to summarize where `SPOmiA
 |- docs/                    # Repository documentation assets
 |- env/                     # Conda environment specification
 |- images/                  # Manuscript figures
-|- new/                     # Case-study scripts, standardized inputs, and generated outputs
 |- resource/                # Standalone helper scripts
 |- software/                # Bundled third-party dependencies used by the pipeline
 `- README.md
@@ -55,7 +54,19 @@ conda env create -f env/SPOmiAlign.yml
 conda activate SPOmiAlign
 ```
 
-Some workflows also rely on the bundled third-party code under `software/`, especially the RoMa-related components.
+After the environment packages are installed, install the bundled third-party code in this order:
+
+```bash
+cd software/fused-local-corr-master/fused-local-corr-master
+pip install -e .
+
+cd ../../Roma
+pip install -e .
+
+cd ../..
+```
+
+Some workflows rely on these local `software/` components, especially the RoMa-related code.
 
 ## Before you run anything
 
@@ -72,12 +83,12 @@ Recommended conventions:
 - Keep coordinates in the same physical frame within each file before alignment.
 - Make sure the source and target files are not empty and contain finite coordinates.
 
-### Minimal folder layout for manuscript-style SM-to-ST alignment
+### Minimal folder layout for demo-style SM-to-ST alignment
 
-If you want to run the manuscript-style SM-to-ST script directly, organize the inputs like this:
+If you want to run the demo-style SM-to-ST scripts directly, organize the inputs like this:
 
 ```text
-new/Data/standardized_data/
+demo/SPOmiAlign_Repro/output_h5ad/
 |- R114/
 |  |- st.h5ad
 |  `- sm.h5ad
@@ -91,13 +102,13 @@ new/Data/standardized_data/
 
 ### 1. Generic `h5ad` to `h5ad` alignment
 
-Use [`new/Code/align_h5ad_to_h5ad_square.py`](new/Code/align_h5ad_to_h5ad_square.py) when you have two arbitrary `h5ad` files and want the most flexible command-line interface.
+Use [`SPOmiAlign/align_h5ad_to_h5ad_square.py`](SPOmiAlign/align_h5ad_to_h5ad_square.py) when you have two arbitrary `h5ad` files and want the most flexible command-line interface.
 
 ```bash
-python new/Code/align_h5ad_to_h5ad_square.py \
+python SPOmiAlign/align_h5ad_to_h5ad_square.py \
   --target-h5ad path/to/reference_st.h5ad \
   --source-h5ad path/to/moving_sm.h5ad \
-  --output-dir new/Output/h5ad_to_h5ad_square \
+  --output-dir output/h5ad_to_h5ad_square \
   --sample-id example_pair \
   --method affine+bspline
 ```
@@ -121,45 +132,26 @@ Useful optional arguments:
 
 ### 2. Manuscript-style SM-to-ST batch alignment
 
-Use [`new/Code/align_sm_to_st_square.py`](new/Code/align_sm_to_st_square.py) when your data already follows the standard sample-folder layout shown above.
+Use the manuscript-style demo scripts when your data already follows the sample-folder layout shown above.
 
 ```bash
-python new/Code/align_sm_to_st_square.py \
-  --data-root new/Data/standardized_data \
-  --output-dir new/Output/sm_to_st_square \
-  --samples R114 S15 \
-  --method affine+bspline
+python demo/python/R114.py
+python demo/python/sm2st.py
 ```
 
-This script expects, for each sample:
+These scripts expect, for each sample:
 
 - `st.h5ad`: the fixed/reference ST slice
 - `sm.h5ad`: the moving/source SM slice
 
-Useful optional arguments:
-
-- `--st-filename` and `--sm-filename`: use alternative filenames inside each sample folder.
-- `--display-long-side`: set the rendered long side in pixels.
-- `--padding`: add white padding around rendered images.
-
 ### 3. Image-to-image alignment
 
-Use [`new/Code/align_puck_to_reference_images.py`](new/Code/align_puck_to_reference_images.py) for plain image registration.
+Use the image-to-image demo scripts for plain image registration.
 
 ```bash
-python new/Code/align_puck_to_reference_images.py \
-  --data-dir new/Data/merfish2slideseq \
-  --target-image 034.png \
-  --source-image Puck_Num_09.png \
-  --output-dir new/Output/merfish2slideseq_image_alignment \
-  --method affine+bspline
+python demo/python/S1toS2.py
+python demo/python/092_to_Puck57.py
 ```
-
-Useful optional arguments:
-
-- `--rotate`: apply clockwise pre-rotation to the source before coordinate handling.
-- `--scale`: apply pre-scaling to the source before coordinate handling.
-- `--auto-upscale-reference`: upscale the reference image if the source image is larger.
 
 ## Case-study scripts and notebooks
 
@@ -173,7 +165,7 @@ The repository already includes manuscript-matched example scripts and notebooks
 
 These are useful as worked examples for the case studies reported in the manuscript. In practice:
 
-- use the `new/Code/*.py` scripts when you want a stable command-line workflow;
+- use `SPOmiAlign/align_h5ad_to_h5ad_square.py` when you want a stable command-line workflow for arbitrary `h5ad` pairs;
 - use the `demo/python/*.py` or notebooks when you want to inspect a full end-to-end example step by step.
 
 ## What the output folders contain

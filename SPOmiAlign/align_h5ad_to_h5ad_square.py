@@ -27,12 +27,11 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SPOMIALIGN_ROOT = "/storage/hermes/yiwang/spomialign/SPOmiAlign-main/SPOmiAlign"
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-if str(SPOMIALIGN_ROOT) not in sys.path:
-    sys.path.insert(0, str(SPOMIALIGN_ROOT))
+PACKAGE_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = PACKAGE_ROOT.parent
+for import_root in (PROJECT_ROOT, PACKAGE_ROOT):
+    if str(import_root) not in sys.path:
+        sys.path.insert(0, str(import_root))
 
 from data_preprocessing import rasterize_h5ad_to_image, scatter_h5ad_to_image  # noqa: E402
 from roma import align_and_process_images  # noqa: E402
@@ -155,7 +154,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=PROJECT_ROOT / "new" / "Output" / "h5ad_to_h5ad_square",
+        default=PROJECT_ROOT / "output" / "h5ad_to_h5ad_square",
         help="Root directory where sample outputs are written.",
     )
     parser.add_argument(
