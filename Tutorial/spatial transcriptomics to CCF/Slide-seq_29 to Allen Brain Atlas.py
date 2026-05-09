@@ -1,4 +1,4 @@
-﻿# Auto-generated from demo/notebook/PUCK29.ipynb
+﻿# Auto-generated from the matching notebook in this demo folder.
 
 # # SPOmiAlign Demo: Image to Image Section Alignment
 #
@@ -25,9 +25,12 @@ import numpy as np
 
 # %matplotlib inline
 
-NOTEBOOK_DIR = Path(__file__).resolve().parent
-DEMO_DIR = NOTEBOOK_DIR.parent
-PROJECT_ROOT = DEMO_DIR.parent
+CASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = next(
+    candidate for candidate in (CASE_DIR, *CASE_DIR.parents)
+    if (candidate / "SPOmiAlign").is_dir()
+)
+DEMO_DIR = PROJECT_ROOT / "demo"
 sys.path.append(str(PROJECT_ROOT / "SPOmiAlign"))
 
 from roma import align_and_process_images
