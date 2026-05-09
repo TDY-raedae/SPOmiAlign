@@ -1,4 +1,4 @@
-﻿# Auto-generated from demo/notebook/R114.ipynb
+﻿# Auto-generated from the matching notebook in this demo folder.
 
 # # SPOmiAlign Demo: Image to Image Section Alignment
 #
@@ -25,9 +25,12 @@ from scipy.spatial import cKDTree
 
 # %matplotlib inline
 
-NOTEBOOK_DIR = Path(__file__).resolve().parent
-DEMO_DIR = NOTEBOOK_DIR.parent
-PROJECT_ROOT = DEMO_DIR.parent
+CASE_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = next(
+    candidate for candidate in (CASE_DIR, *CASE_DIR.parents)
+    if (candidate / "SPOmiAlign").is_dir()
+)
+DEMO_DIR = PROJECT_ROOT / "demo"
 sys.path.append(str(PROJECT_ROOT / "SPOmiAlign"))
 
 from align_h5ad_to_h5ad_square import (
