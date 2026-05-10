@@ -70,23 +70,23 @@ SpatialGlue-related requirements used by the tutorial data processing workflow, 
 
 ## Tutorial
 
-### Tutorial 1: spatial omics to CCF (omic-to-image)
+### Tutorial 1: omic-to-image (spatial transcriptomics to CCF)
 
-- [Slide-seq_43 to Allen Brain Atlas](Tutorial/spatial%20transcriptomics%20to%20CCF/Slide-seq_43%20to%20Allen%20Brain%20Atlas.ipynb) (original Puck43)
-- [Slide-seq_29 to Allen Brain Atlas](Tutorial/spatial%20transcriptomics%20to%20CCF/Slide-seq_29%20to%20Allen%20Brain%20Atlas.ipynb) (original Puck29)
+- [Slide-seq_43 to Allen Brain Atlas](Tutorial/spatial%20transcriptomics%20to%20CCF/Slide-seq_43%20to%20Allen%20Brain%20Atlas.ipynb) 
+- [Slide-seq_29 to Allen Brain Atlas](Tutorial/spatial%20transcriptomics%20to%20CCF/Slide-seq_29%20to%20Allen%20Brain%20Atlas.ipynb) 
 
-### Tutorial 2: spatial transcriptomics multimodal alignment (omic-to-omic)
+### Tutorial 2: omic-to-omic (mouse brain multi-modal spatial transcriptomics alignment)
 
-- [MERFISH to Slide-seq for half mouse brain](Tutorial/multimodal%20spatial%20transcriptomic/MERFISH%20to%20Slide-seq%20for%20half%20mouse%20brain.ipynb) (original Puck092)
+- [MERFISH to Slide-seq for half mouse brain](Tutorial/multimodal%20spatial%20transcriptomic/MERFISH%20to%20Slide-seq%20for%20half%20mouse%20brain.ipynb) 
 
-### Tutorial 3: spatial multi-omics alignment without paired images (omic-to-omic)
+### Tutorial 3: omic-to-omic (spatial multi-omics alignment without paired images)
 
-- [Spatial multi-omics alignment for kidney sections](Tutorial/spatial%20multi-omics%20alignment%20without%20paired%20images/spatial%20multi-omics%20alignment%20for%20kidney%20sections.ipynb) (original R114)
-- [Spatial multi-omics alignment for mouse brain sections](Tutorial/spatial%20multi-omics%20alignment%20without%20paired%20images/spatial%20multi-omics%20alignment%20for%20mouse%20brain%20sections.ipynb) (original sm2st)
+- [ST and SM alignment for kidney sections](Tutorial/spatial%20multi-omics%20alignment%20without%20paired%20images/spatial%20multi-omics%20alignment%20for%20kidney%20sections.ipynb) 
+- [ST and SM alignment for mouse brain sections](Tutorial/spatial%20multi-omics%20alignment%20without%20paired%20images/spatial%20multi-omics%20alignment%20for%20mouse%20brain%20sections.ipynb) 
 
-### Tutorial 4: spatial multi-omics alignment with paired images (image-to-image)
+### Tutorial 4: image-to-image (spatial multi-omics alignment with paired images)
 
-- [Spatial multi-omics alignment with paired images](Tutorial/spatial%20multi-omics%20alignment%20with%20paired%20images/spatial%20multi-omics%20alignment%20with%20paired%20images.ipynb) (original s12s2)
+- [Spatial multi-omics alignment with paired images](Tutorial/spatial%20multi-omics%20alignment%20with%20paired%20images/spatial%20multi-omics%20alignment%20with%20paired%20images.ipynb) 
 
 ## Data
 
