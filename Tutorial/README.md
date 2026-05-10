@@ -2,20 +2,21 @@
 
 Tutorial files are organized by application scenario. Each case keeps its notebook and Python script together.
 
-## Tutorial 1: spatial omics to CCF (omic-to-image)
+## Tutorial 1: omic-to-image (spatial transcriptomics to CCF)
 
-- `Slide-seq_43 to Allen Brain Atlas.ipynb` / `.py` (original `Puck43`)
-- `Slide-seq_29 to Allen Brain Atlas.ipynb` / `.py` (original `Puck29`)
+- `Slide-seq_43 to Allen Brain Atlas.ipynb` / `.py` 
+- `Slide-seq_29 to Allen Brain Atlas.ipynb` / `.py`
 
-## Tutorial 2: spatial transcriptomics multimodal alignment (omic-to-omic)
+## Tutorial 2: omic-to-omic (mouse brain multi-modal spatial transcriptomics alignment)
 
-- `MERFISH to Slide-seq for half mouse brain.ipynb` / `.py` (original `Puck092`)
+- `MERFISH to Slide-seq for half mouse brain.ipynb` / `.py`
+- 
+## Tutorial 3: omic-to-omic (spatial multi-omics alignment without paired images)
 
-## Tutorial 3: spatial multi-omics alignment without paired images (omic-to-omic)
+- `ST and SM alignment for kidney sections.ipynb` / `.py` 
+- `ST and SM alignment for mouse brain sections.ipynb` / `.py`
+- 
+## Tutorial 4: image-to-image (spatial multi-omics alignment with paired images)
 
-- `spatial multi-omics alignment for kidney sections.ipynb` / `.py` (original `R114`)
-- `spatial multi-omics alignment for mouse brain sections.ipynb` / `.py` (original `sm2st`)
-
-## Tutorial 4: spatial multi-omics alignment with paired images (image-to-image)
-
-- `spatial multi-omics alignment with paired images.ipynb` / `.py` (original `s12s2`)
+- `spatial multi-omics alignment with paired images.ipynb` / `.py`
+- 
