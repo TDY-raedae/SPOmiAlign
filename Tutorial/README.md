@@ -10,13 +10,13 @@ Tutorial files are organized by application scenario. Each case keeps its notebo
 ## Tutorial 2: omic-to-omic (mouse brain multi-modal spatial transcriptomics alignment)
 
 - `MERFISH to Slide-seq for half mouse brain.ipynb` / `.py`
-- 
+
 ## Tutorial 3: omic-to-omic (spatial multi-omics alignment without paired images)
 
 - `ST and SM alignment for kidney sections.ipynb` / `.py` 
 - `ST and SM alignment for mouse brain sections.ipynb` / `.py`
-- 
+ 
 ## Tutorial 4: image-to-image (spatial multi-omics alignment with paired images)
 
 - `spatial multi-omics alignment with paired images.ipynb` / `.py`
-- 
+  
