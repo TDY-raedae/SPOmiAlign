@@ -1,10 +1,10 @@
 # SPOmiAlign: a modality-agnostic framework for multimodal spatial omics alignment
 
-`SPOmiAlign` is a computational framework for aligning multimodal spatial omics data.
-
 ## Pipeline
 
 ![SPOmiAlign pipeline](docs/_static/pipeline.png)
+
+SPOmiAlign aligns spatial omics datasets across modalities, samples, and reference images by converting molecular measurements into spatial structural images (SSIs) and registering them with image-matching based transformations. The framework supports omic-to-image, omic-to-omic, and image-to-image workflows, including global alignment and non-rigid refinement, and can propagate the resulting transforms back to spatial coordinates for downstream analysis and reassignment.
 
 ## Directory structure
 
@@ -15,16 +15,15 @@ SPOmiAlign-main/
 |     |- Roma/
 |     `- fused-local-corr-master/
 |- Tutorial/                   Tutorial notebooks and scripts
-|  |- spatial transcriptomics to CCF/
-|  |- multimodal spatial transcriptomic/
-|  |- spatial multi-omics alignment without paired images/
-|  `- spatial multi-omics alignment with paired images/
+|  |- Tutorial 1 omic-to-image (spatial transcriptomics to CCF)/
+|  |- Tutorial 2 omic-to-omic (spatial multi-omics alignment without paired images)/
+|  `- Tutorial 3 image-to-image (spatial multi-omics alignment with paired images)/
 |- docs/
 |  `- _static/pipeline.png     Pipeline figure
 |- env/
 |  `- SPOmiAlign.yml           Conda environment file
-|- readme images/              Additional figures
-|- resource/                   Helper scripts and resources
+|- Data/                       Downloaded tutorial data, not tracked by git
+|- output/                     Generated tutorial results, not tracked by git
 `- README.md
 ```
 
@@ -36,6 +35,22 @@ Create and activate the conda environment:
 conda env create -f env/SPOmiAlign.yml
 conda activate SPOmiAlign
 ```
+
+If using GPU acceleration, install the PyTorch build that matches your GPU driver and CUDA version. We run SPOmiAlign with A100 and torch2.6.0+cu124.
+
+For CUDA 12.4, PyTorch provides `torch==2.6.0+cu124` wheels through the official cu124 wheel index:
+
+```bash
+pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+```
+
+Users in mainland China can speed up regular Python package downloads with the Tsinghua PyPI mirror:
+
+```bash
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple <package>
+```
+
+Keep the official PyTorch CUDA wheel index for GPU-enabled PyTorch installs.
 
 Install the bundled local dependencies:
 
@@ -49,47 +64,42 @@ pip install -e .
 cd ../../..
 ```
 
-SpatialGlue-related requirements used by the tutorial data processing workflow, following the [SpatialGlue requirements](https://github.com/JinmiaoChenLab/SpatialGlue):
+Additional package versions used by the tutorial data processing workflow:
 
-| Package | Version |
-| --- | --- |
-| Python | 3.8 |
-| torch | >= 1.8.0 |
-| cudnn | >= 10.2 |
-| numpy | 1.22.3 |
-| scanpy | 1.9.1 |
-| anndata | 0.8.0 |
-| rpy2 | 3.4.1 |
-| pandas | 1.4.2 |
-| scipy | 1.8.1 |
-| scikit-learn | 1.1.1 |
-| scikit-misc | 0.2.0 |
-| tqdm | 4.64.0 |
-| matplotlib | 3.4.2 |
-| R | 4.0.3 |
+| Package      | Version  |
+| ------------ | -------- |
+| Python       | 3.8      |
+| torch        | >= 1.8.0 |
+| cudnn        | >= 10.2  |
+| numpy        | 1.22.3   |
+| scanpy       | 1.9.1    |
+| anndata      | 0.8.0    |
+| pandas       | 1.4.2    |
+| scipy        | 1.8.1    |
+| scikit-learn | 1.1.1    |
+| scikit-misc  | 0.2.0    |
+| tqdm         | 4.64.0   |
+| matplotlib   | 3.4.2    |
 
 ## Tutorial
 
+Tutorial files are organized by application scenario. Each case keeps its notebook and Python script together.
+
 ### Tutorial 1: omic-to-image (spatial transcriptomics to CCF)
 
-- [Slide-seq_43 to Allen Brain Atlas](Tutorial/spatial%20transcriptomics%20to%20CCF/Slide-seq_43%20to%20Allen%20Brain%20Atlas.ipynb) 
-- [Slide-seq_29 to Allen Brain Atlas](Tutorial/spatial%20transcriptomics%20to%20CCF/Slide-seq_29%20to%20Allen%20Brain%20Atlas.ipynb) 
+- spatial transcriptomic section (Slide-seq_29) to Allen Brain Atlas: [notebook](Tutorial/Tutorial%201%20omic-to-image%20%28spatial%20transcriptomics%20to%20CCF%29/spatial%20transcriptomic%20section%20%28Slide-seq_29%29%20to%20Allen%20Brain%20Atlas.ipynb) / [script](Tutorial/Tutorial%201%20omic-to-image%20%28spatial%20transcriptomics%20to%20CCF%29/spatial%20transcriptomic%20section%20%28Slide-seq_29%29%20to%20Allen%20Brain%20Atlas.py)
 
-### Tutorial 2: omic-to-omic (mouse brain multi-modal spatial transcriptomics alignment)
+### Tutorial 2: omic-to-omic (spatial multi-omics alignment without paired images)
 
-- [MERFISH to Slide-seq for half mouse brain](Tutorial/multimodal%20spatial%20transcriptomic/MERFISH%20to%20Slide-seq%20for%20half%20mouse%20brain.ipynb) 
+- Spatial multi-omics alignment for kidney sections: [notebook](Tutorial/Tutorial%202%20omic-to-omic%20%28spatial%20multi-omics%20alignment%20without%20paired%20images%29/spatial%20multi-omics%20alignment%20for%20kidney%20sections.ipynb) / [script](Tutorial/Tutorial%202%20omic-to-omic%20%28spatial%20multi-omics%20alignment%20without%20paired%20images%29/spatial%20multi-omics%20alignment%20for%20kidney%20sections.py)
+- Spatial multi-omics alignment for mouse brain sections: [notebook](Tutorial/Tutorial%202%20omic-to-omic%20%28spatial%20multi-omics%20alignment%20without%20paired%20images%29/spatial%20multi-omics%20alignment%20for%20mouse%20brain%20sections.ipynb) / [script](Tutorial/Tutorial%202%20omic-to-omic%20%28spatial%20multi-omics%20alignment%20without%20paired%20images%29/spatial%20multi-omics%20alignment%20for%20mouse%20brain%20sections.py)
 
-### Tutorial 3: omic-to-omic (spatial multi-omics alignment without paired images)
+### Tutorial 3: image-to-image (spatial multi-omics alignment with paired images)
 
-- [ST and SM alignment for kidney sections](Tutorial/spatial%20multi-omics%20alignment%20without%20paired%20images/spatial%20multi-omics%20alignment%20for%20kidney%20sections.ipynb) 
-- [ST and SM alignment for mouse brain sections](Tutorial/spatial%20multi-omics%20alignment%20without%20paired%20images/spatial%20multi-omics%20alignment%20for%20mouse%20brain%20sections.ipynb) 
-
-### Tutorial 4: image-to-image (spatial multi-omics alignment with paired images)
-
-- [Spatial multi-omics alignment with paired images](Tutorial/spatial%20multi-omics%20alignment%20with%20paired%20images/spatial%20multi-omics%20alignment%20with%20paired%20images.ipynb) 
+- Spatial multi-omics alignment with paired images: [notebook](Tutorial/Tutorial%203%20image-to-image%20%28spatial%20multi-omics%20alignment%20with%20paired%20images%29/spatial%20multi-omics%20alignment%20with%20paired%20images.ipynb) / [script](Tutorial/Tutorial%203%20image-to-image%20%28spatial%20multi-omics%20alignment%20with%20paired%20images%29/spatial%20multi-omics%20alignment%20with%20paired%20images.py)
 
 ## Data
 
-Tutorial data are available from Google Drive:
+The prepared tutorial data are available from Google Drive. Download the archive from the link below and use it as the input data for the notebooks in `Tutorial/`.
 
 https://drive.google.com/file/d/17j39rTAISwuH-kL3H0hnvzTG15Zo_xSK/view?usp=sharing

@@ -7,6 +7,7 @@ import numpy as np
 import scanpy as sc
 import cv2
 from PIL import Image
+from scipy import sparse
 from scipy.spatial import cKDTree
 
 matplotlib.use("Agg")
@@ -266,18 +267,36 @@ def _load_render_intensity(
 ) -> np.ndarray:
     """Load one scalar intensity value per observation."""
     if intensity_mode == "X_sum":
-        try:
-            intensity_raw = np.array(adata.X.sum(axis=1)).reshape(-1)
-        except Exception:
-            intensity_raw = np.asarray(adata.X.sum(axis=1)).ravel()
-        return np.nan_to_num(intensity_raw.astype(np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+        return _calculate_x_sum(adata)
 
     if intensity_mode == "obs_col":
-        if not intensity_obs_col:
-            raise ValueError("intensity_obs_col must be provided when intensity_mode='obs_col'")
-        return np.asarray(adata.obs[intensity_obs_col], dtype=np.float64)
+        if intensity_obs_col and intensity_obs_col in adata.obs.columns:
+            return np.asarray(adata.obs[intensity_obs_col], dtype=np.float64)
+        if intensity_obs_col:
+            print(f"[INFO] obs['{intensity_obs_col}'] was not found; automatically calculating nFeat from X.")
+        else:
+            print("[INFO] No intensity obs key was provided; automatically calculating nFeat from X.")
+        return _calculate_nfeat(adata)
 
     raise ValueError("intensity_mode must be 'X_sum' or 'obs_col'")
+
+
+def _calculate_x_sum(adata) -> np.ndarray:
+    try:
+        intensity_raw = np.array(adata.X.sum(axis=1)).reshape(-1)
+    except Exception:
+        intensity_raw = np.asarray(adata.X.sum(axis=1)).ravel()
+    return np.nan_to_num(intensity_raw.astype(np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _calculate_nfeat(adata) -> np.ndarray:
+    """Automatically calculate nFeat as the number of non-zero features per spot."""
+    X = adata.X
+    if sparse.issparse(X):
+        values = np.asarray(X.getnnz(axis=1)).reshape(-1)
+    else:
+        values = np.count_nonzero(np.asarray(X), axis=1)
+    return np.nan_to_num(values.astype(np.float64), nan=0.0, posinf=0.0, neginf=0.0)
 
 
 def _spatial_inlier_mask(
@@ -457,18 +476,11 @@ def rasterize_h5ad_to_image(
         x, y = xy[:, 0], xy[:, 1]
 
     # ===== Read raw intensity =====
-    if intensity_mode == "X_sum":
-        # Compatible with sparse matrices
-        try:
-            intensity_raw = np.array(adata.X.sum(axis=1)).reshape(-1)
-        except Exception:
-            intensity_raw = np.asarray(adata.X.sum(axis=1)).ravel()
-    elif intensity_mode == "obs_col":
-        if not intensity_obs_col:
-            raise ValueError("intensity_obs_col must be provided when intensity_mode='obs_col'")
-        intensity_raw = np.asarray(adata.obs[intensity_obs_col], dtype=np.float64)
-    else:
-        raise ValueError("intensity_mode must be 'X_sum' or 'obs_col'")
+    intensity_raw = _load_render_intensity(
+        adata,
+        intensity_mode=intensity_mode,
+        intensity_obs_col=intensity_obs_col,
+    )
 
     # ===== Unified intensity processing: optional log, 1-99 clipping,
     # normalization, and optional thresholding =====

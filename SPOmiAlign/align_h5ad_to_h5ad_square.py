@@ -165,8 +165,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--method",
         default="affine+bspline",
-        choices=["Affine", "Homography", "bspline", "affine+bspline"],
+        choices=["Rigid", "Affine", "Homography", "bspline", "affine+bspline"],
         help="Alignment method passed to align_and_process_images.",
+    )
+    parser.add_argument(
+        "--device",
+        default=None,
+        help="Torch device for alignment, e.g. 'cuda:0', 'cuda:1', or 'cpu'. Defaults to cuda:0 if available.",
     )
     parser.add_argument(
         "--target-rotate",
@@ -641,7 +646,8 @@ def save_overlay(target_png: Path, transformed_source_png: Path, out_path: Path)
 
     th, tw = target_img.shape[:2]
     sh, sw = source_img.shape[:2]
-    canvas = np.full((th, tw, 3), 255, dtype=np.uint8)
+    canvas = np.empty((th, tw, 3), dtype=np.uint8)
+    canvas[:] = source_img[0, 0]
     h = min(th, sh)
     w = min(tw, sw)
     canvas[:h, :w] = source_img[:h, :w]
@@ -861,6 +867,7 @@ def run_pair(args: argparse.Namespace) -> None:
         auto_upscale_reference=False,
         source_render_meta=source_meta,
         target_render_meta=target_meta,
+        device=args.device,
     )
     align_elapsed = time.perf_counter() - align_start
 

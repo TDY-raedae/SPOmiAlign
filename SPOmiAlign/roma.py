@@ -30,6 +30,24 @@ from romatch import roma_outdoor
 # [Config] Prevent HDF5 file-locking issues
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
+def resolve_torch_device(device=None):
+    if device is None:
+        return torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+
+    resolved = torch.device(device)
+    if resolved.type == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError(f"Requested device '{device}', but CUDA is not available.")
+        if resolved.index is not None and resolved.index >= torch.cuda.device_count():
+            raise RuntimeError(
+                f"Requested device '{device}', but only {torch.cuda.device_count()} CUDA device(s) are available."
+            )
+    elif resolved.type == "mps":
+        mps_backend = getattr(torch.backends, "mps", None)
+        if mps_backend is None or not mps_backend.is_available():
+            raise RuntimeError(f"Requested device '{device}', but MPS is not available.")
+    return resolved
+
 def debug_step_visualization(adata, bg_bgr, step_name, output_dir, x_col, y_col, rotate, radius):
     """
     Minimal color visualization (white background + red tissue + blue spot overlay)
@@ -140,6 +158,21 @@ def warp_image_bspline(
     default_pixel_value: float = 0.0,
 ):
     """SimpleITK B-spline image transformation"""
+    if moving_img_np.ndim == 3 and not np.isscalar(default_pixel_value):
+        fill_values = np.asarray(default_pixel_value, dtype=float).reshape(-1)
+        channels = []
+        for channel_idx in range(moving_img_np.shape[2]):
+            fill = float(fill_values[min(channel_idx, fill_values.size - 1)])
+            channels.append(
+                warp_image_bspline(
+                    moving_img_np[:, :, channel_idx],
+                    tx,
+                    out_size_xy=out_size_xy,
+                    default_pixel_value=fill,
+                )
+            )
+        return np.stack(channels, axis=-1)
+
     if moving_img_np.ndim == 2:
         moving = sitk.GetImageFromArray(moving_img_np.astype(np.float32))
     else:
@@ -191,6 +224,26 @@ def fit_bspline_transform(fixed_kpts, moving_kpts, H, W, mesh_size=None, max_ite
         return sitk.DisplacementFieldTransform(disp_img)
     except:
         return sitk.Transform(2, sitk.sitkIdentity)
+
+def fit_rigid_transform(fixed_kpts, moving_kpts):
+    """Estimate a 2D rigid transform from moving points to fixed points."""
+    if len(moving_kpts) < 2:
+        return np.eye(2, 3, dtype=np.float32)
+
+    fixed = np.asarray(fixed_kpts, dtype=np.float64)
+    moving = np.asarray(moving_kpts, dtype=np.float64)
+    fixed_center = fixed.mean(axis=0)
+    moving_center = moving.mean(axis=0)
+    fixed_centered = fixed - fixed_center
+    moving_centered = moving - moving_center
+
+    U, _, Vt = np.linalg.svd(moving_centered.T @ fixed_centered)
+    R = Vt.T @ U.T
+    if np.linalg.det(R) < 0:
+        Vt[-1, :] *= -1
+        R = Vt.T @ U.T
+    t = fixed_center - R @ moving_center
+    return np.hstack([R, t.reshape(2, 1)]).astype(np.float32)
 
 # ==========================================
 # 2. RoMa helper functions
@@ -271,9 +324,10 @@ def align_and_process_images(
     auto_upscale_reference: bool = True,
     source_render_meta: dict | None = None,
     target_render_meta: dict | None = None,
+    device=None,
 ):
     os.makedirs(output_dir, exist_ok=True)
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+    device = resolve_torch_device(device)
     print(f"Using device: {device}")
     # [Internal helper: reuse logic from data_processing]
     def apply_manual_transform(
@@ -475,7 +529,9 @@ def align_and_process_images(
     print(f"Estimating {method} transform...")
     M, tx_csv, tx_bspline = None, None, None
     
-    if method.lower() == 'homography':
+    if method.lower() == 'rigid':
+        M = fit_rigid_transform(kpts1, kpts2)
+    elif method.lower() == 'homography':
         M, _ = cv2.findHomography(kpts2, kpts1, cv2.RANSAC)
     elif method.lower() == 'bspline':
         M = fit_bspline_transform(kpts1, kpts2, H, W)
@@ -489,7 +545,7 @@ def align_and_process_images(
         kpts2_affine = (M @ np.hstack([kpts2, np.ones((len(kpts2), 1))]).T).T
         tx_bspline = fit_bspline_transform(kpts1, kpts2_affine, H, W)
         tx_csv = fit_bspline_transform(kpts2_affine, kpts1, H, W)
-    else: # Default Affine/Rigid
+    else: # Default Affine
         if len(kpts2) >= 3:
             A = np.hstack([kpts2, np.ones((len(kpts2), 1))])
             X, _, _, _ = np.linalg.lstsq(A, kpts1, rcond=None)
@@ -499,14 +555,12 @@ def align_and_process_images(
     # 4. Image Warping
     print("Warping images...")
 
-    
-    fill_color = (255, 255, 255)
+    im2_resized = cv2.cvtColor(np.array(im2_pil_raw.resize((W, H))), cv2.COLOR_RGB2BGR)
+    im1_resized = cv2.cvtColor(np.array(im1_pil_raw.resize((W, H))), cv2.COLOR_RGB2BGR)
+    fill_color = tuple(int(v) for v in im2_resized[0, 0])
 
     print(f"Padding fill color: {fill_color}")
     # ================= End of modification =================
-
-    im2_resized = cv2.cvtColor(np.array(im2_pil_raw.resize((W, H))), cv2.COLOR_RGB2BGR)
-    im1_resized = cv2.cvtColor(np.array(im1_pil_raw.resize((W, H))), cv2.COLOR_RGB2BGR)
 
     if method.lower() == 'homography':
         
@@ -518,7 +572,7 @@ def align_and_process_images(
             im2_resized,
             M,
             (W, H),
-            default_pixel_value=255,
+            default_pixel_value=fill_color,
         ).astype(np.uint8)
     
     elif method.lower() == 'affine+bspline':
@@ -530,7 +584,7 @@ def align_and_process_images(
             im2_aff,
             tx_bspline,
             (W, H),
-            default_pixel_value=255,
+            default_pixel_value=fill_color,
         ).astype(np.uint8)
     
     else:
