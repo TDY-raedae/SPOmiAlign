@@ -19,9 +19,9 @@ sys.path.append(os.getcwd())
 
 try:
     from data_preprocessing import rasterize_h5ad_to_image
-    print("✅ Successfully imported 'rasterize_h5ad_to_image' from data_process.py")
+    print("[OK] Successfully imported 'rasterize_h5ad_to_image' from data_process.py")
 except ImportError:
-    print("❌ Error: Could not import 'data_process.py'. Please ensure it is in the same directory.")
+    print("[ERROR] Could not import 'data_process.py'. Please ensure it is in the same directory.")
     sys.exit(1)
 
 # Make sure romatch is installed
@@ -620,11 +620,11 @@ def align_and_process_images(
             """
             # Check whether these are valid obs column names
             if x_col and y_col and (x_col in adata_obj.obs) and (y_col in adata_obj.obs):
-                # print(f"📝 Updating coordinates in adata.obs columns: {x_col}, {y_col}")
+                # print(f"Updating coordinates in adata.obs columns: {x_col}, {y_col}")
                 adata_obj.obs[x_col] = points[:, 0]
                 adata_obj.obs[y_col] = points[:, 1]
             else:
-                print(f"📝 Columns not found or not specified. Updating adata.obsm['{sp_key}']")
+                print(f"Columns not found or not specified. Updating adata.obsm['{sp_key}']")
                 adata_obj.obsm[sp_key] = points
 
         if os.path.exists(h5ad_path):
@@ -642,7 +642,7 @@ def align_and_process_images(
             
             # --- Pre-transform (Rotate/Scale) ---
             if source_render_meta is None and ((abs(rotate) > 1e-12) or (abs(scale - 1.0) > 1e-12)):
-                print(f"🔄 Applying manual pre-transform: rotate={rotate}°, scale={scale}")
+                print(f"Applying manual pre-transform: rotate={rotate}°, scale={scale}")
                 pts = apply_manual_transform(pts, rotate, scale, origin=origin)
                 # Update the intermediate result
                 update_coords_in_adata(adata, pts, x_obs_col, y_obs_col, spatial_key)
@@ -714,10 +714,10 @@ def align_and_process_images(
             # === [Sanitize] Clean _index issues ===
             def sanitize_dataframe(df, name="df"):
                 if '_index' in df.columns:
-                    print(f"⚠️ Removing '_index' column from {name}...")
+                    print(f"Removing '_index' column from {name}...")
                     df.drop(columns=['_index'], inplace=True)
                 if df.index.name == '_index':
-                    print(f"⚠️ Renaming index from '_index' to None in {name}...")
+                    print(f"Renaming index from '_index' to None in {name}...")
                     df.index.name = None
 
             sanitize_dataframe(adata.obs, "adata.obs")
@@ -727,18 +727,18 @@ def align_and_process_images(
                 try:
                     raw_adata = adata.raw.to_adata()
                     if '_index' in raw_adata.var.columns or raw_adata.var.index.name == '_index':
-                        # print("⚠️ Found '_index' issue in adata.raw! Re-generating raw...")
+                        # print("Found '_index' issue in adata.raw; regenerating raw...")
                         sanitize_dataframe(raw_adata.var, "adata.raw.var")
                         adata.raw = raw_adata
                 except Exception as e:
-                    print(f"⚠️ Warning: Could not sanitize adata.raw: {e}")
+                    print(f"Warning: Could not sanitize adata.raw: {e}")
 
             # Save
             try:
                 adata.write(h5ad_save_path)
-                print(f"✅ Saved transformed H5AD to {h5ad_save_path}")
+                print(f"[OK] Saved transformed H5AD to {h5ad_save_path}")
             except Exception as e:
-                print(f"❌ Failed to save H5AD: {e}")
+                print(f"[ERROR] Failed to save H5AD: {e}")
                 h5ad_save_path = None
         else:
             h5ad_save_path = None
