@@ -29,7 +29,7 @@ from align_h5ad_to_h5ad_square import (  # noqa: E402
     resolve_coordinate_config,
 )
 from data_preprocessing import scatter_h5ad_to_image  # noqa: E402
-from reassignment_direction import (  # noqa: E402
+from reassignment import (  # noqa: E402
     build_reassigned_h5ad_from_mapping,
     cmap_blue,
     cmap_orange,
