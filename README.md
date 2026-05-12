@@ -71,4 +71,4 @@ Tutorial files are organized by application scenario. Each case keeps its notebo
 
 The prepared tutorial data are available from Google Drive. Download the archive from the link below and use it as the input data for the notebooks in `Tutorial/`.
 
-https://drive.google.com/file/d/17j39rTAISwuH-kL3H0hnvzTG15Zo_xSK/view?usp=sharing
+[https://drive.google.com/file/d/17j39rTAISwuH-kL3H0hnvzTG15Zo_xSK/view?usp=sharing](https://drive.google.com/file/d/17j39rTAISwuH-kL3H0hnvzTG15Zo_xSK/view?usp=sharing)
