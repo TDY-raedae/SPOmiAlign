@@ -29,7 +29,7 @@ SPOmiAlign-main/
 
 ## Installation
 
-Create and activate the conda environment:
+1. Create and activate the conda environment:
 
 ```bash
 conda env create -f env/SPOmiAlign.yml
@@ -38,7 +38,7 @@ conda activate SPOmiAlign
 
 We run SPOmiAlign with A100 and torch2.6.0+cu124. If using GPU acceleration, install the PyTorch build that matches your GPU driver and CUDA version. 
 
-Install the bundled local dependencies:
+2. Install the bundled local dependencies:
 
 ```bash
 cd SPOmiAlign/software/fused-local-corr-master/fused-local-corr-master
