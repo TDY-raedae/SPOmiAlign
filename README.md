@@ -36,21 +36,7 @@ conda env create -f env/SPOmiAlign.yml
 conda activate SPOmiAlign
 ```
 
-If using GPU acceleration, install the PyTorch build that matches your GPU driver and CUDA version. We run SPOmiAlign with A100 and torch2.6.0+cu124.
-
-For CUDA 12.4, PyTorch provides `torch==2.6.0+cu124` wheels through the official cu124 wheel index:
-
-```bash
-pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
-```
-
-Users in mainland China can speed up regular Python package downloads with the Tsinghua PyPI mirror:
-
-```bash
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple <package>
-```
-
-Keep the official PyTorch CUDA wheel index for GPU-enabled PyTorch installs.
+We run SPOmiAlign with A100 and torch2.6.0+cu124. If using GPU acceleration, install the PyTorch build that matches your GPU driver and CUDA version. 
 
 Install the bundled local dependencies:
 
@@ -63,23 +49,6 @@ pip install -e .
 
 cd ../../..
 ```
-
-Additional package versions used by the tutorial data processing workflow:
-
-| Package      | Version  |
-| ------------ | -------- |
-| Python       | 3.8      |
-| torch        | >= 1.8.0 |
-| cudnn        | >= 10.2  |
-| numpy        | 1.22.3   |
-| scanpy       | 1.9.1    |
-| anndata      | 0.8.0    |
-| pandas       | 1.4.2    |
-| scipy        | 1.8.1    |
-| scikit-learn | 1.1.1    |
-| scikit-misc  | 0.2.0    |
-| tqdm         | 4.64.0   |
-| matplotlib   | 3.4.2    |
 
 ## Tutorial
 
